@@ -92,9 +92,10 @@ const SPREADSHEET_ID = '1d9s84o9LrVdncnWCNC85Vjnml4uyjp-rkMgqXkfesls';
 const PLAYER_RANGE = '플레이어!A:G';
 const PLAYER_WRITE_RANGE = '플레이어!A1';
 const LOG_SHEET_NAME = '로그';
-const LOG_HEADER_RANGE = `${LOG_SHEET_NAME}!A1:E1`;
-const LOG_RANGE = `${LOG_SHEET_NAME}!A:E`;
-const LOG_APPEND_RANGE = `${LOG_SHEET_NAME}!A:E`;
+const LOG_SHEET_REF = `'${LOG_SHEET_NAME}'`;
+const LOG_HEADER_RANGE = `${LOG_SHEET_REF}!A1:E1`;
+const LOG_RANGE = `${LOG_SHEET_REF}!A:E`;
+const LOG_APPEND_RANGE = `${LOG_SHEET_REF}!A:E`;
 const LOG_HEADER = ['id', 'type', 'text', 'publicText', 'createdAt'];
 
 // =========================
@@ -146,21 +147,14 @@ async function ensureLogSheetHeader() {
     return;
   }
 
-  let values = [];
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === LOG_SHEET_NAME);
 
-  try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: LOG_HEADER_RANGE
-    });
-    values = res.data.values || [];
-  } catch (err) {
-    const status = err.code || err.response?.status;
-
-    if (status !== 400) {
-      throw err;
-    }
-
+  if (!sheetExists) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       requestBody: {
@@ -175,6 +169,11 @@ async function ensureLogSheetHeader() {
     });
   }
 
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: LOG_HEADER_RANGE
+  });
+  const values = res.data.values || [];
   const header = values[0] || [];
   const hasHeader = LOG_HEADER.every((name, index) => header[index] === name);
 
@@ -231,6 +230,10 @@ async function appendLogToSheet(log) {
       values: [[log.id, log.type, log.text, log.publicText, log.createdAt]]
     }
   });
+}
+
+function getErrorDetail(err) {
+  return err.response?.data?.error?.message || err.message || String(err);
 }
 
 // =========================
@@ -990,7 +993,17 @@ app.get('/logs', async (req, res) => {
     res.json(logs);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '로그를 불러오지 못했습니다.' });
+    res.status(500).json({ error: '로그를 불러오지 못했습니다.', detail: getErrorDetail(err) });
+  }
+});
+
+app.post('/logs/test', async (req, res) => {
+  try {
+    const log = await addLog('test', `로그 저장 테스트\ncreatedAt: ${new Date().toISOString()}`);
+    res.json({ ok: true, log, logs: logHistory });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '로그 저장 테스트 실패', detail: getErrorDetail(err) });
   }
 });
 
@@ -1013,7 +1026,7 @@ app.post('/players/:playerId/balance-log', async (req, res) => {
     res.json({ ok: true, log: log.text, logs: logHistory });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '잔고 로그를 생성하지 못했습니다.' });
+    res.status(500).json({ error: '잔고 로그를 생성하지 못했습니다.', detail: getErrorDetail(err) });
   }
 });
 
