@@ -27,6 +27,7 @@ let players = [];
 let lastLogText = '';
 let logHistory = [];
 let logSheetReady = false;
+let blackjackSessionSheetReady = false;
 let blackjackSessions = new Map();
 let russianRouletteSessions = new Map();
 const COLORS = ['red', 'blue', 'green', 'yellow', 'white'];
@@ -104,6 +105,24 @@ const LOG_HEADER_RANGE = `${LOG_SHEET_REF}!A1:E1`;
 const LOG_RANGE = `${LOG_SHEET_REF}!A:E`;
 const LOG_APPEND_RANGE = `${LOG_SHEET_REF}!A:E`;
 const LOG_HEADER = ['id', 'type', 'text', 'publicText', 'createdAt'];
+const BLACKJACK_SESSION_SHEET_NAME = '블랙잭세션';
+const BLACKJACK_SESSION_SHEET_REF = `'${BLACKJACK_SESSION_SHEET_NAME}'`;
+const BLACKJACK_SESSION_HEADER_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A1:K1`;
+const BLACKJACK_SESSION_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A:K`;
+const BLACKJACK_SESSION_WRITE_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A1`;
+const BLACKJACK_SESSION_HEADER = [
+  'playerId',
+  'color',
+  'bet',
+  'deck',
+  'playerCards',
+  'dealerCards',
+  'lastDraw',
+  'dealerDraws',
+  'done',
+  'result',
+  'updatedAt'
+];
 
 // =========================
 // 📥 시트 → 서버
@@ -194,6 +213,151 @@ async function ensureLogSheetHeader() {
   }
 
   logSheetReady = true;
+}
+
+async function ensureBlackjackSessionSheetHeader() {
+  if (blackjackSessionSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === BLACKJACK_SESSION_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: BLACKJACK_SESSION_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BLACKJACK_SESSION_HEADER_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = BLACKJACK_SESSION_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: BLACKJACK_SESSION_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [BLACKJACK_SESSION_HEADER] }
+    });
+  }
+
+  blackjackSessionSheetReady = true;
+}
+
+function parseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function parseBlackjackSessionRow(row) {
+  return {
+    playerId: Number(row[0]),
+    color: row[1] || '',
+    bet: toChipAmount(row[2]),
+    deck: parseJsonArray(row[3]),
+    playerCards: parseJsonArray(row[4]),
+    dealerCards: parseJsonArray(row[5]),
+    lastDraw: row[6] || '',
+    dealerDraws: parseJsonArray(row[7]),
+    done: row[8] === 'true',
+    result: row[9] || ''
+  };
+}
+
+function blackjackSessionToRow(session) {
+  return [
+    session.playerId,
+    session.color,
+    session.bet,
+    JSON.stringify(session.deck || []),
+    JSON.stringify(session.playerCards || []),
+    JSON.stringify(session.dealerCards || []),
+    session.lastDraw || '',
+    JSON.stringify(session.dealerDraws || []),
+    session.done ? 'true' : 'false',
+    session.result || '',
+    new Date().toISOString()
+  ];
+}
+
+async function loadBlackjackSessionRows() {
+  await ensureBlackjackSessionSheetHeader();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BLACKJACK_SESSION_RANGE
+  });
+  return (res.data.values || []).slice(1).filter((row) => row.length);
+}
+
+async function writeBlackjackSessionRows(rows) {
+  await ensureBlackjackSessionSheetHeader();
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BLACKJACK_SESSION_RANGE
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BLACKJACK_SESSION_WRITE_RANGE,
+    valueInputOption: 'RAW',
+    requestBody: { values: [BLACKJACK_SESSION_HEADER, ...rows] }
+  });
+}
+
+async function loadBlackjackSessionsFromSheet() {
+  const rows = await loadBlackjackSessionRows();
+  const sessions = rows.map(parseBlackjackSessionRow)
+    .filter((session) => Number.isFinite(session.playerId));
+
+  blackjackSessions = new Map(sessions.map((session) => [String(session.playerId), session]));
+  return sessions;
+}
+
+async function getBlackjackSession(playerId) {
+  await loadBlackjackSessionsFromSheet();
+  return blackjackSessions.get(String(playerId));
+}
+
+async function saveBlackjackSession(session) {
+  const rows = await loadBlackjackSessionRows();
+  const nextRows = rows
+    .filter((row) => Number(row[0]) !== Number(session.playerId));
+
+  nextRows.push(blackjackSessionToRow(session));
+  await writeBlackjackSessionRows(nextRows);
+  blackjackSessions.set(String(session.playerId), session);
+}
+
+async function deleteBlackjackSession(playerId) {
+  const rows = await loadBlackjackSessionRows();
+  const nextRows = rows
+    .filter((row) => Number(row[0]) !== Number(playerId));
+
+  await writeBlackjackSessionRows(nextRows);
+  blackjackSessions.delete(String(playerId));
 }
 
 function parseLogRow(row) {
@@ -1134,7 +1298,7 @@ app.post('/blackjack/start', async (req, res) => {
       lastDraw: `시작 카드: 플레이어 ${playerCards.join(', ')} / 딜러 ${dealerCards.join(', ')}`
     };
 
-    blackjackSessions.set(String(player.id), session);
+    await saveBlackjackSession(session);
 
     const log = await addLog(
       'blackjack',
@@ -1158,11 +1322,12 @@ app.post('/blackjack/action', async (req, res) => {
 
     const { playerId, action } = req.body;
     const player = getPlayerById(playerId);
-    const session = blackjackSessions.get(String(playerId));
 
     if (!player) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
+
+    const session = await getBlackjackSession(playerId);
 
     if (!session) {
       return res.status(400).json({ error: '진행 중인 블랙잭이 없습니다.' });
@@ -1177,7 +1342,10 @@ app.post('/blackjack/action', async (req, res) => {
       if (getBlackjackHandValue(session.playerCards) > 21) {
         resultText = finishBlackjackSession(player, session);
         await saveSheet();
+        await deleteBlackjackSession(playerId);
         emitRealtime('update', players);
+      } else {
+        await saveBlackjackSession(session);
       }
 
       const log = await addLog(
@@ -1195,6 +1363,7 @@ app.post('/blackjack/action', async (req, res) => {
       session.lastDraw = '플레이어 stand';
       const resultText = finishBlackjackSession(player, session);
       await saveSheet();
+      await deleteBlackjackSession(playerId);
 
       const log = await addLog(
         'blackjack',
