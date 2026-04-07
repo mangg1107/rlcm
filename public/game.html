@@ -551,6 +551,7 @@
       }
 
       renderLogs(data.logs);
+      await loadPlayers();
       alert(gameType === 'roulette'
         ? `Roulette result: ${data.result} / ${data.win ? 'win' : 'loss'}`
         : gameType === 'highlow'
@@ -605,6 +606,7 @@
       activeRussianRouletteSessionId = data.state.id;
       renderRussianRouletteState(data.state);
       renderLogs(data.logs);
+      await loadPlayers();
     }
 
     async function pullRussianRouletteTrigger() {
@@ -623,6 +625,7 @@
 
       renderRussianRouletteState(data.state);
       renderLogs(data.logs);
+      await loadPlayers();
 
       if (data.state.done) {
         activeRussianRouletteSessionId = null;
@@ -668,6 +671,7 @@ Result: ${state.lastAction}`;
       activeBlackjackPlayerId = payload.playerId;
       renderBlackjackState(data.state);
       renderLogs(data.logs);
+      await loadPlayers();
     }
 
     async function blackjackAction(action) {
@@ -687,6 +691,7 @@ Result: ${state.lastAction}`;
 
       renderBlackjackState(data.state);
       renderLogs(data.logs);
+      await loadPlayers();
 
       if (data.state.done) {
         activeBlackjackPlayerId = null;
@@ -746,8 +751,6 @@ Status: ${state.done ? state.result : 'in progress'}`;
     loadPlayers();
     loadLogs();
     updateGameFields();
-    setInterval(loadPlayers, 3000);
-    setInterval(loadLogs, 3000);
   </script>
 </body>
 </html>

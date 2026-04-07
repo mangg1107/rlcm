@@ -161,6 +161,7 @@
       }
 
       alert('칩 이동 완료');
+      await loadPlayers();
     }
 
     async function convertChip() {
@@ -183,6 +184,7 @@
       }
 
       alert(`환전 완료: ${data.result}개 지급`);
+      await loadPlayers();
     }
 
     async function setRates() {
@@ -206,12 +208,11 @@
       }
 
       alert('비율 적용 완료');
+      await loadRates();
     }
 
     loadPlayers();
     loadRates();
-    setInterval(loadPlayers, 3000);
-    setInterval(loadRates, 5000);
   </script>
 </body>
 </html>

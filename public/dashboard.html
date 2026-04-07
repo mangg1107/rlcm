@@ -110,6 +110,7 @@
       }
 
       renderLogs(data.logs);
+      await reloadPlayers();
     }
 
     async function copyLog() {
@@ -184,7 +185,6 @@
     }
 
     reloadPlayers();
-    setInterval(reloadPlayers, 3000);
   </script>
 </body>
 </html>
