@@ -87,7 +87,7 @@
       const players = await res.json();
       render(players);
 
-      const logsRes = await fetch('/api/logs');
+      const logsRes = await fetch('/api/logs?limit=100');
       allLogs = await logsRes.json();
       renderLogs();
     }

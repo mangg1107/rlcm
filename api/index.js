@@ -99,19 +99,26 @@ const sheets = google.sheets({ version: 'v4', auth });
 // 네 시트 ID
 const SPREADSHEET_ID = '1d9s84o9LrVdncnWCNC85Vjnml4uyjp-rkMgqXkfesls';
 
-const PLAYER_RANGE = '플레이어!A:G';
-const PLAYER_WRITE_RANGE = '플레이어!A1';
+const PLAYER_SHEET_NAME = '플레이어';
+const PLAYER_SHEET_REF = `'${PLAYER_SHEET_NAME}'`;
+const PLAYER_RANGE = `${PLAYER_SHEET_REF}!A:G`;
+const PLAYER_WRITE_RANGE = `${PLAYER_SHEET_REF}!A1`;
+const PLAYER_ID_RANGE = `${PLAYER_SHEET_REF}!A:A`;
+const PLAYER_HEADER = ['id', 'name', ...COLORS];
 const LOG_SHEET_NAME = '로그';
 const LOG_SHEET_REF = `'${LOG_SHEET_NAME}'`;
 const LOG_HEADER_RANGE = `${LOG_SHEET_REF}!A1:E1`;
 const LOG_RANGE = `${LOG_SHEET_REF}!A:E`;
+const LOG_ID_RANGE = `${LOG_SHEET_REF}!A:A`;
 const LOG_APPEND_RANGE = `${LOG_SHEET_REF}!A:E`;
 const LOG_HEADER = ['id', 'type', 'text', 'publicText', 'createdAt'];
+const DEFAULT_LOG_LIMIT = 100;
+const MAX_LOG_LIMIT = 1000;
 const BLACKJACK_SESSION_SHEET_NAME = '블랙잭세션';
 const BLACKJACK_SESSION_SHEET_REF = `'${BLACKJACK_SESSION_SHEET_NAME}'`;
 const BLACKJACK_SESSION_HEADER_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A1:K1`;
 const BLACKJACK_SESSION_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A:K`;
-const BLACKJACK_SESSION_WRITE_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A1`;
+const BLACKJACK_SESSION_ID_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A:A`;
 const BLACKJACK_SESSION_HEADER = [
   'playerId',
   'color',
@@ -129,7 +136,7 @@ const BACCARAT_SESSION_SHEET_NAME = '바카라세션';
 const BACCARAT_SESSION_SHEET_REF = `'${BACCARAT_SESSION_SHEET_NAME}'`;
 const BACCARAT_SESSION_HEADER_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A1:M1`;
 const BACCARAT_SESSION_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A:M`;
-const BACCARAT_SESSION_WRITE_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A1`;
+const BACCARAT_SESSION_ID_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A:A`;
 const BACCARAT_SESSION_HEADER = [
   'playerId',
   'side',
@@ -149,6 +156,36 @@ const BACCARAT_SESSION_HEADER = [
 // =========================
 // 📥 시트 → 서버
 // =========================
+function withPlayerRowNumber(player, rowNumber) {
+  Object.defineProperty(player, '_rowNumber', {
+    value: rowNumber,
+    enumerable: false,
+    writable: true
+  });
+  return player;
+}
+
+function parsePlayerRow(row, rowNumber) {
+  return withPlayerRowNumber({
+    id: Number(row[0] || 0),
+    name: row[1] || '',
+    red: readChipValue(row[2]),
+    blue: readChipValue(row[3]),
+    green: readChipValue(row[4]),
+    yellow: readChipValue(row[5]),
+    white: readChipValue(row[6])
+  }, rowNumber);
+}
+
+function playerToRow(player) {
+  return [player.id, player.name, ...COLORS.map((color) => player[color] || 0)];
+}
+
+function uniquePlayerIds(playerIds) {
+  return [...new Set(playerIds.map(Number))]
+    .filter((id) => Number.isFinite(id));
+}
+
 async function loadSheet() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
@@ -162,15 +199,7 @@ async function loadSheet() {
     return;
   }
 
-  players = rows.slice(1).map((r) => ({
-    id: Number(r[0] || 0),
-    name: r[1] || '',
-    red: readChipValue(r[2]),
-    blue: readChipValue(r[3]),
-    green: readChipValue(r[4]),
-    yellow: readChipValue(r[5]),
-    white: readChipValue(r[6])
-  }));
+  players = rows.slice(1).map((row, index) => parsePlayerRow(row, index + 2));
 }
 
 // =========================
@@ -178,8 +207,8 @@ async function loadSheet() {
 // =========================
 async function saveSheet() {
   const values = [
-    ['id', 'name', ...COLORS],
-    ...players.map((p) => [p.id, p.name, ...COLORS.map((color) => p[color] || 0)])
+    PLAYER_HEADER,
+    ...players.map(playerToRow)
   ];
 
   await sheets.spreadsheets.values.update({
@@ -187,6 +216,107 @@ async function saveSheet() {
     range: PLAYER_WRITE_RANGE,
     valueInputOption: 'RAW',
     requestBody: { values }
+  });
+}
+
+async function getPlayerRowNumbers(playerIds) {
+  const ids = uniquePlayerIds(playerIds);
+  const idSet = new Set(ids);
+  const rowNumbers = new Map();
+
+  if (!ids.length) {
+    return rowNumbers;
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: PLAYER_ID_RANGE
+  });
+
+  (res.data.values || []).forEach((row, index) => {
+    const id = Number(row[0]);
+
+    if (idSet.has(id) && !rowNumbers.has(id)) {
+      rowNumbers.set(id, index + 1);
+    }
+  });
+
+  return rowNumbers;
+}
+
+async function loadPlayersByIds(playerIds) {
+  const ids = uniquePlayerIds(playerIds);
+
+  if (!ids.length) {
+    players = [];
+    return players;
+  }
+
+  const rowNumbers = await getPlayerRowNumbers(ids);
+  const targets = ids
+    .map((id) => ({ id, rowNumber: rowNumbers.get(id) }))
+    .filter((target) => target.rowNumber);
+
+  if (!targets.length) {
+    players = [];
+    return players;
+  }
+
+  const res = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId: SPREADSHEET_ID,
+    ranges: targets.map((target) => `${PLAYER_SHEET_REF}!A${target.rowNumber}:G${target.rowNumber}`)
+  });
+
+  players = (res.data.valueRanges || [])
+    .map((valueRange, index) => parsePlayerRow((valueRange.values || [])[0] || [], targets[index].rowNumber))
+    .filter((player) => Number.isFinite(player.id) && targets.some((target) => target.id === player.id));
+
+  return players;
+}
+
+async function savePlayers(changedPlayers) {
+  const byId = new Map();
+
+  changedPlayers
+    .filter(Boolean)
+    .forEach((player) => {
+      const id = Number(player.id);
+
+      if (Number.isFinite(id)) {
+        byId.set(id, player);
+      }
+    });
+
+  const targetPlayers = [...byId.values()];
+
+  if (!targetPlayers.length) {
+    return;
+  }
+
+  const missingRowIds = targetPlayers
+    .filter((player) => !player._rowNumber)
+    .map((player) => player.id);
+  const rowNumbers = await getPlayerRowNumbers(missingRowIds);
+
+  const data = targetPlayers.map((player) => {
+    const rowNumber = player._rowNumber || rowNumbers.get(Number(player.id));
+
+    if (!rowNumber) {
+      throw new Error(`플레이어 행을 찾을 수 없습니다: ${player.id}`);
+    }
+
+    return {
+      range: `${PLAYER_SHEET_REF}!A${rowNumber}:G${rowNumber}`,
+      values: [playerToRow(player)]
+    };
+  });
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data
+    }
   });
 }
 
@@ -293,6 +423,82 @@ function parseJsonArray(value) {
   }
 }
 
+function sheetRowRange(sheetRef, endColumn, rowNumber) {
+  return `${sheetRef}!A${rowNumber}:${endColumn}${rowNumber}`;
+}
+
+async function findRowNumberByFirstColumn(idRange, id) {
+  const targetId = Number(id);
+
+  if (!Number.isFinite(targetId)) {
+    return null;
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: idRange
+  });
+  const rows = res.data.values || [];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    if (Number(rows[index]?.[0]) === targetId) {
+      return index + 1;
+    }
+  }
+
+  return null;
+}
+
+async function readSingleRow(range) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range
+  });
+  return (res.data.values || [])[0] || [];
+}
+
+async function updateSingleRow(range, row) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range,
+    valueInputOption: 'RAW',
+    requestBody: { values: [row] }
+  });
+}
+
+async function appendSingleRow(range, row) {
+  const res = await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [row] }
+  });
+  return res.data.updates?.updatedRange || '';
+}
+
+async function clearSingleRow(range) {
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range
+  });
+}
+
+function getRowNumberFromRange(range) {
+  const match = String(range || '').match(/![A-Z]+(\d+):/);
+  const rowNumber = match ? Number(match[1]) : NaN;
+  return Number.isFinite(rowNumber) ? rowNumber : null;
+}
+
+function withSessionRowNumber(session, rowNumber) {
+  Object.defineProperty(session, '_rowNumber', {
+    value: rowNumber,
+    enumerable: false,
+    writable: true
+  });
+  return session;
+}
+
 function parseBlackjackSessionRow(row) {
   return {
     playerId: Number(row[0]),
@@ -324,61 +530,57 @@ function blackjackSessionToRow(session) {
   ];
 }
 
-async function loadBlackjackSessionRows() {
+async function getBlackjackSessionRowNumber(playerId) {
   await ensureBlackjackSessionSheetHeader();
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: BLACKJACK_SESSION_RANGE
-  });
-  return (res.data.values || []).slice(1).filter((row) => row.length);
-}
-
-async function writeBlackjackSessionRows(rows) {
-  await ensureBlackjackSessionSheetHeader();
-
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SPREADSHEET_ID,
-    range: BLACKJACK_SESSION_RANGE
-  });
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: BLACKJACK_SESSION_WRITE_RANGE,
-    valueInputOption: 'RAW',
-    requestBody: { values: [BLACKJACK_SESSION_HEADER, ...rows] }
-  });
-}
-
-async function loadBlackjackSessionsFromSheet() {
-  const rows = await loadBlackjackSessionRows();
-  const sessions = rows.map(parseBlackjackSessionRow)
-    .filter((session) => Number.isFinite(session.playerId));
-
-  blackjackSessions = new Map(sessions.map((session) => [String(session.playerId), session]));
-  return sessions;
+  return findRowNumberByFirstColumn(BLACKJACK_SESSION_ID_RANGE, playerId);
 }
 
 async function getBlackjackSession(playerId) {
-  await loadBlackjackSessionsFromSheet();
-  return blackjackSessions.get(String(playerId));
+  const rowNumber = await getBlackjackSessionRowNumber(playerId);
+
+  if (!rowNumber) {
+    blackjackSessions.delete(String(playerId));
+    return null;
+  }
+
+  const row = await readSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'K', rowNumber));
+  const session = parseBlackjackSessionRow(row);
+
+  if (!Number.isFinite(session.playerId)) {
+    blackjackSessions.delete(String(playerId));
+    return null;
+  }
+
+  withSessionRowNumber(session, rowNumber);
+  blackjackSessions.set(String(session.playerId), session);
+  return session;
 }
 
 async function saveBlackjackSession(session) {
-  const rows = await loadBlackjackSessionRows();
-  const nextRows = rows
-    .filter((row) => Number(row[0]) !== Number(session.playerId));
+  let rowNumber = session._rowNumber || await getBlackjackSessionRowNumber(session.playerId);
+  const row = blackjackSessionToRow(session);
 
-  nextRows.push(blackjackSessionToRow(session));
-  await writeBlackjackSessionRows(nextRows);
+  if (rowNumber) {
+    await updateSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'K', rowNumber), row);
+  } else {
+    const updatedRange = await appendSingleRow(BLACKJACK_SESSION_RANGE, row);
+    rowNumber = getRowNumberFromRange(updatedRange);
+  }
+
+  if (rowNumber) {
+    withSessionRowNumber(session, rowNumber);
+  }
   blackjackSessions.set(String(session.playerId), session);
 }
 
 async function deleteBlackjackSession(playerId) {
-  const rows = await loadBlackjackSessionRows();
-  const nextRows = rows
-    .filter((row) => Number(row[0]) !== Number(playerId));
+  const cachedSession = blackjackSessions.get(String(playerId));
+  const rowNumber = cachedSession?._rowNumber || await getBlackjackSessionRowNumber(playerId);
 
-  await writeBlackjackSessionRows(nextRows);
+  if (rowNumber) {
+    await clearSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'K', rowNumber));
+  }
+
   blackjackSessions.delete(String(playerId));
 }
 
@@ -464,61 +666,57 @@ function baccaratSessionToRow(session) {
   ];
 }
 
-async function loadBaccaratSessionRows() {
+async function getBaccaratSessionRowNumber(playerId) {
   await ensureBaccaratSessionSheetHeader();
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: BACCARAT_SESSION_RANGE
-  });
-  return (res.data.values || []).slice(1).filter((row) => row.length);
-}
-
-async function writeBaccaratSessionRows(rows) {
-  await ensureBaccaratSessionSheetHeader();
-
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SPREADSHEET_ID,
-    range: BACCARAT_SESSION_RANGE
-  });
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: BACCARAT_SESSION_WRITE_RANGE,
-    valueInputOption: 'RAW',
-    requestBody: { values: [BACCARAT_SESSION_HEADER, ...rows] }
-  });
-}
-
-async function loadBaccaratSessionsFromSheet() {
-  const rows = await loadBaccaratSessionRows();
-  const sessions = rows.map(parseBaccaratSessionRow)
-    .filter((session) => Number.isFinite(session.playerId));
-
-  baccaratSessions = new Map(sessions.map((session) => [String(session.playerId), session]));
-  return sessions;
+  return findRowNumberByFirstColumn(BACCARAT_SESSION_ID_RANGE, playerId);
 }
 
 async function getBaccaratSession(playerId) {
-  await loadBaccaratSessionsFromSheet();
-  return baccaratSessions.get(String(playerId));
+  const rowNumber = await getBaccaratSessionRowNumber(playerId);
+
+  if (!rowNumber) {
+    baccaratSessions.delete(String(playerId));
+    return null;
+  }
+
+  const row = await readSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'M', rowNumber));
+  const session = parseBaccaratSessionRow(row);
+
+  if (!Number.isFinite(session.playerId)) {
+    baccaratSessions.delete(String(playerId));
+    return null;
+  }
+
+  withSessionRowNumber(session, rowNumber);
+  baccaratSessions.set(String(session.playerId), session);
+  return session;
 }
 
 async function saveBaccaratSession(session) {
-  const rows = await loadBaccaratSessionRows();
-  const nextRows = rows
-    .filter((row) => Number(row[0]) !== Number(session.playerId));
+  let rowNumber = session._rowNumber || await getBaccaratSessionRowNumber(session.playerId);
+  const row = baccaratSessionToRow(session);
 
-  nextRows.push(baccaratSessionToRow(session));
-  await writeBaccaratSessionRows(nextRows);
+  if (rowNumber) {
+    await updateSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'M', rowNumber), row);
+  } else {
+    const updatedRange = await appendSingleRow(BACCARAT_SESSION_RANGE, row);
+    rowNumber = getRowNumberFromRange(updatedRange);
+  }
+
+  if (rowNumber) {
+    withSessionRowNumber(session, rowNumber);
+  }
   baccaratSessions.set(String(session.playerId), session);
 }
 
 async function deleteBaccaratSession(playerId) {
-  const rows = await loadBaccaratSessionRows();
-  const nextRows = rows
-    .filter((row) => Number(row[0]) !== Number(playerId));
+  const cachedSession = baccaratSessions.get(String(playerId));
+  const rowNumber = cachedSession?._rowNumber || await getBaccaratSessionRowNumber(playerId);
 
-  await writeBaccaratSessionRows(nextRows);
+  if (rowNumber) {
+    await clearSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'M', rowNumber));
+  }
+
   baccaratSessions.delete(String(playerId));
 }
 
@@ -532,17 +730,55 @@ function parseLogRow(row) {
   };
 }
 
-async function loadLogHistory() {
-  await ensureLogSheetHeader();
+function normalizeLogLimit(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
 
+  const limit = Math.floor(Number(value));
+  return Number.isFinite(limit) && limit > 0
+    ? Math.min(limit, MAX_LOG_LIMIT)
+    : null;
+}
+
+async function loadLimitedLogRows(limit) {
+  const idRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: LOG_ID_RANGE
+  });
+  const rowCount = (idRes.data.values || []).length;
+
+  if (rowCount <= 1) {
+    return [];
+  }
+
+  const endRow = rowCount;
+  const startRow = Math.max(2, endRow - limit + 1);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: LOG_RANGE
+    range: `${LOG_SHEET_REF}!A${startRow}:E${endRow}`
   });
 
-  const rows = res.data.values || [];
+  return res.data.values || [];
+}
+
+async function loadLogHistory(limitValue) {
+  await ensureLogSheetHeader();
+
+  const limit = normalizeLogLimit(limitValue);
+  let rows;
+
+  if (limit) {
+    rows = await loadLimitedLogRows(limit);
+  } else {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: LOG_RANGE
+    });
+    rows = (res.data.values || []).slice(1);
+  }
+
   logHistory = rows
-    .slice(1)
     .filter((row) => row.length)
     .map(parseLogRow)
     .reverse();
@@ -632,7 +868,7 @@ async function addLog(type, text, publicText = text) {
 
   logHistory = [log, ...logHistory];
   await appendLogToSheet(log);
-  await loadLogHistory();
+  await loadLogHistory(DEFAULT_LOG_LIMIT);
   return log;
 }
 
@@ -1467,7 +1703,7 @@ app.get('/players', async (req, res) => {
 // 마지막 로그 조회
 app.get('/logtext', async (req, res) => {
   try {
-    const logs = await loadLogHistory();
+    const logs = await loadLogHistory(1);
     res.send(logs[0]?.text || lastLogText);
   } catch (err) {
     console.error(err);
@@ -1477,7 +1713,7 @@ app.get('/logtext', async (req, res) => {
 
 app.get('/logs', async (req, res) => {
   try {
-    const logs = await loadLogHistory();
+    const logs = await loadLogHistory(req.query.limit);
     res.json(logs);
   } catch (err) {
     console.error(err);
@@ -1501,7 +1737,7 @@ app.post('/logs/test', async (req, res) => {
 
 async function handleBalanceLog(req, res, playerId) {
   try {
-    await loadSheet();
+    await loadPlayersByIds([playerId]);
 
     const player = getPlayerById(playerId);
 
@@ -1552,9 +1788,8 @@ app.post('/rates', (req, res) => {
 
 app.post('/blackjack/start', async (req, res) => {
   try {
-    await loadSheet();
-
     const { playerId, color, amount } = req.body;
+    await loadPlayersByIds([playerId]);
     const player = getPlayerById(playerId);
     const bet = toChipAmount(amount);
 
@@ -1608,9 +1843,8 @@ app.post('/blackjack/start', async (req, res) => {
 
 app.post('/blackjack/action', async (req, res) => {
   try {
-    await loadSheet();
-
     const { playerId, action } = req.body;
+    await loadPlayersByIds([playerId]);
     const player = getPlayerById(playerId);
 
     if (!player) {
@@ -1631,7 +1865,7 @@ app.post('/blackjack/action', async (req, res) => {
       let resultText = '진행 중';
       if (getBlackjackHandValue(session.playerCards) > 21) {
         resultText = finishBlackjackSession(player, session);
-        await saveSheet();
+        await savePlayers([player]);
         await deleteBlackjackSession(playerId);
         emitRealtime('update', players);
       } else {
@@ -1652,7 +1886,7 @@ app.post('/blackjack/action', async (req, res) => {
     if (action === 'stand') {
       session.lastDraw = '플레이어 stand';
       const resultText = finishBlackjackSession(player, session);
-      await saveSheet();
+      await savePlayers([player]);
       await deleteBlackjackSession(playerId);
 
       const log = await addLog(
@@ -1677,9 +1911,8 @@ app.post('/blackjack/action', async (req, res) => {
 
 app.post('/baccarat/start', async (req, res) => {
   try {
-    await loadSheet();
-
     const { playerId, color, amount, side } = req.body;
+    await loadPlayersByIds([playerId]);
     const player = getPlayerById(playerId);
     const bet = toChipAmount(amount);
     const nextSide = String(side || '').toUpperCase();
@@ -1726,7 +1959,7 @@ app.post('/baccarat/start', async (req, res) => {
     if (isBaccaratNatural(session)) {
       session.playerAction = 'natural';
       resultText = finishBaccaratSession(player, session);
-      await saveSheet();
+      await savePlayers([player]);
       await deleteBaccaratSession(player.id);
       emitRealtime('update', players);
     } else {
@@ -1751,9 +1984,8 @@ app.post('/baccarat/start', async (req, res) => {
 
 app.post('/baccarat/action', async (req, res) => {
   try {
-    await loadSheet();
-
     const { playerId, action } = req.body;
+    await loadPlayersByIds([playerId]);
     const player = getPlayerById(playerId);
     const nextAction = String(action || '').toLowerCase();
 
@@ -1781,7 +2013,7 @@ app.post('/baccarat/action', async (req, res) => {
     }
 
     const resultText = finishBaccaratSession(player, session);
-    await saveSheet();
+    await savePlayers([player]);
     await deleteBaccaratSession(playerId);
 
     const log = await addLog(
@@ -1803,12 +2035,11 @@ app.post('/baccarat/action', async (req, res) => {
 
 app.post('/russian-roulette/start', async (req, res) => {
   try {
-    await loadSheet();
-
     const { participantCount, participantIds = [], color, amount } = req.body;
     const expectedParticipantCount = toChipAmount(participantCount);
     const uniqueParticipantIds = [...new Set(participantIds.map(Number))]
       .filter((id) => Number.isFinite(id));
+    await loadPlayersByIds(uniqueParticipantIds);
     const participants = uniqueParticipantIds.map(getPlayerById);
     const bet = toChipAmount(amount);
 
@@ -1857,7 +2088,7 @@ app.post('/russian-roulette/start', async (req, res) => {
     };
 
     russianRouletteSessions.set(session.id, session);
-    await saveSheet();
+    await savePlayers(participants);
 
     const log = await addLog(
       'russianroulette',
@@ -1878,8 +2109,6 @@ app.post('/russian-roulette/start', async (req, res) => {
 
 app.post('/russian-roulette/trigger', async (req, res) => {
   try {
-    await loadSheet();
-
     const { sessionId } = req.body;
     const session = russianRouletteSessions.get(String(sessionId));
 
@@ -1891,6 +2120,8 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       russianRouletteSessions.delete(String(sessionId));
       return res.status(400).json({ error: '이미 종료된 러시안룰렛입니다.' });
     }
+
+    await loadPlayersByIds(session.participantIds);
 
     const eliminatedIndex = Math.floor(Math.random() * session.activeIds.length);
     const [eliminatedId] = session.activeIds.splice(eliminatedIndex, 1);
@@ -1911,7 +2142,7 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       session.result = `${winner.name} 승리`;
       session.lastAction += `. 최종 승자: ${winner.name}. 팟 ${session.color} ${session.pot} 지급.`;
 
-      await saveSheet();
+      await savePlayers([winner]);
       russianRouletteSessions.delete(String(sessionId));
 
       const log = await addLog(
@@ -1948,9 +2179,8 @@ app.post('/russian-roulette/trigger', async (req, res) => {
 // 게임 처리
 app.post('/game', async (req, res) => {
   try {
-    await loadSheet();
-
     const { gameType, playerId, color, amount, multiplier = 2, extra = {} } = req.body;
+    await loadPlayersByIds([playerId]);
     const player = getPlayerById(playerId);
     const bet = toChipAmount(amount);
     const mul = Number(multiplier);
@@ -2017,7 +2247,7 @@ app.post('/game', async (req, res) => {
 
     const log = await addLog(gameType, makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win));
 
-    await saveSheet();
+    await savePlayers([player]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
@@ -2033,9 +2263,8 @@ app.post('/game', async (req, res) => {
 // 칩 이동
 app.post('/exchange', async (req, res) => {
   try {
-    await loadSheet();
-
     const { fromId, toId, color, amount } = req.body;
+    await loadPlayersByIds([fromId, toId]);
     const from = getPlayerById(fromId);
     const to = getPlayerById(toId);
     const moveAmount = toChipAmount(amount);
@@ -2065,7 +2294,7 @@ app.post('/exchange', async (req, res) => {
 
     const log = await addLog('exchange', makeTransferLog(from, to, color, moveAmount));
 
-    await saveSheet();
+    await savePlayers([from, to]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
@@ -2081,9 +2310,8 @@ app.post('/exchange', async (req, res) => {
 // 색 환전
 app.post('/convert', async (req, res) => {
   try {
-    await loadSheet();
-
     const { playerId, fromColor, toColor, amount } = req.body;
+    await loadPlayersByIds([playerId]);
     const player = getPlayerById(playerId);
     const convertAmount = toChipAmount(amount);
 
@@ -2119,7 +2347,7 @@ app.post('/convert', async (req, res) => {
 
     const log = await addLog('convert', makeConvertLog(player, fromColor, toColor, convertAmount, result));
 
-    await saveSheet();
+    await savePlayers([player]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);

@@ -395,7 +395,7 @@
     }
 
     async function loadLogs() {
-      const res = await fetch('/api/logs');
+      const res = await fetch('/api/logs?limit=100');
       const logs = await res.json();
       renderLogs(logs);
     }
