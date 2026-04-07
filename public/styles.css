@@ -16,12 +16,28 @@
   --radius: 2px;
   --mono: 'DM Mono', monospace;
   --sans: 'DM Sans', sans-serif;
+
+  /* Spacing scale */
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* Touch target minimum */
+  --touch-min: 44px;
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -31,6 +47,8 @@ body {
   font-size: 14px;
   line-height: 1.6;
   min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
 }
 
 /* ── Nav ── */
@@ -38,15 +56,27 @@ body {
   display: flex;
   gap: 0;
   align-items: stretch;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   background: var(--text);
-  padding: 0 24px;
+  padding: 0 var(--space-lg);
   margin-bottom: 0;
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav a {
   text-decoration: none;
+  flex-shrink: 0;
 }
 
 .nav a button,
@@ -65,8 +95,11 @@ body {
   min-width: unset;
   max-width: unset;
   width: auto;
+  min-height: var(--touch-min);
   transition: color 0.15s, border-color 0.15s;
   margin: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .nav a button:hover,
@@ -88,7 +121,7 @@ h1 {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding: 28px 32px 16px;
+  padding: 28px var(--space-xl) 16px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 28px;
 }
@@ -106,8 +139,8 @@ h2 {
 }
 
 body > *:not(.nav):not(h1) {
-  padding-left: 32px;
-  padding-right: 32px;
+  padding-left: var(--space-xl);
+  padding-right: var(--space-xl);
 }
 
 /* ── Toolbar ── */
@@ -134,7 +167,7 @@ body > *:not(.nav):not(h1) {
 input,
 select {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 16px; /* prevents iOS zoom on focus */
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -142,6 +175,7 @@ select {
   padding: 9px 12px;
   min-width: 180px;
   max-width: 100%;
+  min-height: var(--touch-min);
   outline: none;
   transition: border-color 0.15s;
   appearance: none;
@@ -171,8 +205,10 @@ button {
   padding: 10px 20px;
   min-width: 140px;
   max-width: 100%;
+  min-height: var(--touch-min);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+  touch-action: manipulation;
 }
 
 button:hover {
@@ -189,14 +225,34 @@ button + button {
 }
 
 /* ── Table ── */
+.table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 32px;
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 680px;
-  margin-bottom: 32px;
+  min-width: 560px;
   background: var(--surface);
+  overflow: hidden;
+}
+
+.table-wrapper table {
+  border: none;
+  border-radius: 0;
+  margin-bottom: 0;
+}
+
+/* Fallback for tables without wrapper */
+table:not(.table-wrapper table) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  margin-bottom: 32px;
   overflow: hidden;
 }
 
@@ -211,6 +267,7 @@ th {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   text-align: center;
+  white-space: nowrap;
 }
 
 td {
@@ -220,6 +277,7 @@ td {
   font-size: 13px;
   border-bottom: 1px solid var(--border);
   color: var(--text-2);
+  white-space: nowrap;
 }
 
 tr:last-child td {
@@ -228,6 +286,7 @@ tr:last-child td {
 
 .id-button {
   min-width: unset;
+  min-height: unset;
   width: auto;
   padding: 4px 10px;
   background: transparent;
@@ -254,7 +313,7 @@ td[style*="color:#c7a000"]{ color: #8a6c00 !important; font-weight: 500; }
 /* ── Textarea ── */
 textarea {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-2);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -267,6 +326,7 @@ textarea {
   margin-bottom: 24px;
   transition: border-color 0.15s;
   line-height: 1.7;
+  -webkit-appearance: none;
 }
 
 textarea:focus {
@@ -278,7 +338,7 @@ textarea:focus {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 24px;
+  padding: var(--space-lg);
   margin-bottom: 20px;
   max-width: 560px;
 }
@@ -357,6 +417,8 @@ textarea:focus {
   padding: 10px 12px;
   margin: 10px 0 0;
   line-height: 1.7;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .log-meta {
@@ -377,6 +439,7 @@ textarea:focus {
   font-size: 10px;
   padding: 5px 12px;
   min-width: unset;
+  min-height: 32px;
   background: transparent;
   color: var(--text-2);
   border: 1px solid var(--border);
@@ -406,69 +469,130 @@ textarea:focus {
 /* ── Mobile ── */
 @media (max-width: 720px) {
   body > *:not(.nav):not(h1) {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
   }
 
   h1 {
-    padding: 20px 16px 14px;
+    font-size: 12px;
+    padding: 18px var(--space-md) 12px;
+    margin-bottom: 20px;
   }
 
-  .nav {
-    padding: 0 8px;
-  }
-
-  .nav a button,
-  .nav button {
-    padding: 12px 10px;
+  h2 {
     font-size: 10px;
   }
 
-  .nav a,
+  .nav {
+    padding: 0 var(--space-xs);
+  }
+
   .nav a button,
   .nav button {
-    width: auto;
+    padding: 0 var(--space-sm);
+    font-size: 10px;
+    min-height: var(--touch-min);
+  }
+
+  /* Inputs: keep 16px to prevent iOS zoom */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 
   .section {
     max-width: 100%;
-    padding: 16px;
+    padding: var(--space-md);
   }
 
+  /* Buttons: full-width on mobile */
   button {
     min-width: unset;
     width: 100%;
+    min-height: var(--touch-min);
   }
 
   button + button {
     margin-left: 0;
-    margin-top: 8px;
+    margin-top: var(--space-xs);
   }
 
-  .toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .toolbar select {
-    width: 100%;
-  }
-
-  table {
-    display: block;
-    overflow-x: auto;
-    white-space: nowrap;
-  }
-
-  textarea {
-    height: 130px;
-  }
-
-  .log-meta {
-    align-items: stretch;
+  .id-button {
+    width: auto;
+    min-height: unset;
   }
 
   .log-meta button {
     width: 100%;
+  }
+
+  /* Toolbar stacks vertically */
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+  }
+
+  .toolbar select,
+  .toolbar input {
+    width: 100%;
+    min-width: unset;
+  }
+
+  .toolbar button {
+    width: 100%;
+  }
+
+  /* Log meta stacks */
+  .log-meta {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  /* Log item padding */
+  .log-item {
+    padding: var(--space-sm);
+  }
+
+  /* Table: scroll wrapper preferred; fallback for bare tables */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    min-width: unset;
+  }
+
+  textarea {
+    height: 130px;
+    font-size: 14px; /* readable even on small screens */
+  }
+
+  /* Section button full width */
+  .section > button {
+    width: 100%;
+    margin-top: var(--space-xs);
+  }
+}
+
+/* ── Extra small (≤ 400px) ── */
+@media (max-width: 400px) {
+  .nav a button,
+  .nav button {
+    font-size: 9px;
+    padding: 0 10px;
+    letter-spacing: 0.05em;
+  }
+
+  h1 {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  td, th {
+    padding: 9px 10px;
+    font-size: 12px;
   }
 }
