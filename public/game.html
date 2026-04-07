@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="nav">
+    <a href="/dashboard.html"><button>Dashboard</button></a>
+    <a href="/game.html"><button>Game</button></a>
+    <a href="/exchange.html"><button>Exchange</button></a>
+  </div>
+
+  <h1>Game</h1>
+
+  <div class="section">
+    <div id="playerField" class="form-row">
+      <label>Player</label><br />
+      <select id="playerId" onchange="updateBalanceHint()"></select>
+    </div>
+
+    <div class="form-row">
+      <label>Game type</label><br />
+      <select id="gameType" onchange="updateGameFields()">
+        <option value="roulette">Roulette</option>
+        <option value="highlow">High Low</option>
+        <option value="baccarat">Baccarat</option>
+        <option value="blackjack">Blackjack</option>
+        <option value="redblack">Red Black</option>
+        <option value="russianroulette">Russian Roulette</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>Chip color</label><br />
+      <select id="color" onchange="updateBalanceHint(); updateRussianRoulettePlayers();">
+        <option value="red">Red</option>
+        <option value="blue">Blue</option>
+        <option value="green">Green</option>
+        <option value="yellow">Yellow</option>
+        <option value="white">White</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>Bet amount</label><br />
+      <input id="amount" type="number" min="1" value="1" oninput="updateBalanceHint()" />
+    </div>
+    <div class="hint" id="balanceHint"></div>
+
+    <div id="rouletteFields">
+      <div class="form-row">
+        <label>Roulette bet type</label><br />
+        <select id="rouletteBetType" onchange="updateRouletteDetailInput()">
+          <option value="number">Number (35:1)</option>
+          <option value="split">Split, 2 numbers (17:1)</option>
+          <option value="street">Street, 3 numbers (11:1)</option>
+          <option value="corner">Corner, 4 numbers (8:1)</option>
+          <option value="sixline">Six line, 6 numbers (5:1)</option>
+          <option value="dozen">Dozen (2:1)</option>
+          <option value="column">Column (2:1)</option>
+          <option value="red">Red (1:1)</option>
+          <option value="black">Black (1:1)</option>
+          <option value="even">Even (1:1)</option>
+          <option value="odd">Odd (1:1)</option>
+          <option value="low">1-18 (1:1)</option>
+          <option value="high">19-36 (1:1)</option>
+        </select>
+      </div>
+
+      <div class="form-row" id="rouletteDetailTextWrap">
+        <label id="rouletteDetailLabel">Roulette detail</label><br />
+        <input id="rouletteDetail" type="text" placeholder="number: 17 / split: 17,20 / dozen: 1 / column: 2" />
+      </div>
+
+      <div class="form-row" id="rouletteDetailSelectWrap" style="display:none;">
+        <label id="rouletteDetailSelectLabel">Roulette detail</label><br />
+        <select id="rouletteDetailSelect"></select>
+      </div>
+
+      <div class="hint" id="rouletteDetailHint"></div>
+
+      <button type="button" onclick="playGame()">Spin roulette</button>
+    </div>
+
+    <div id="highLowFields" style="display:none;">
+      <div class="form-row">
+        <label>High Low choice</label><br />
+        <select id="highLowChoice">
+          <option value="HIGH">HIGH (8, 9, 10, J, Q, K)</option>
+          <option value="LOW">LOW (A, 2, 3, 4, 5, 6)</option>
+        </select>
+      </div>
+
+      <button type="button" onclick="playGame()">Draw high-low card</button>
+    </div>
+
+    <div id="baccaratFields" style="display:none;">
+      <div class="form-row">
+        <label>Baccarat side</label><br />
+        <select id="baccaratSide">
+          <option value="PLAYER">PLAYER (1:1)</option>
+          <option value="BANKER">BANKER (0.95:1)</option>
+          <option value="TIE">TIE (8:1)</option>
+        </select>
+      </div>
+
+      <button type="button" onclick="playGame()">Deal baccarat</button>
+    </div>
+
+    <div id="redBlackFields" style="display:none;">
+      <div class="form-row">
+        <label>Red Black choice</label><br />
+        <select id="redBlackChoice">
+          <option value="RED">RED</option>
+          <option value="BLACK">BLACK</option>
+        </select>
+      </div>
+
+      <button type="button" onclick="playGame()">Draw red/black</button>
+    </div>
+
+    <div id="russianRouletteFields" style="display:none;">
+      <div class="form-row">
+        <label>Player count</label><br />
+        <input id="russianParticipantCount" type="number" min="2" step="1" value="2" oninput="updateRussianRoulettePlayers()" />
+      </div>
+
+      <div class="form-row">
+        <label>Participants</label><br />
+        <div id="russianParticipantInputs"></div>
+      </div>
+      <div class="hint">Each selected player pays the bet into the pot. Each round eliminates 1 of the current n survivors. Last survivor wins the pot.</div>
+
+      <button type="button" onclick="startRussianRoulette()">Start Russian Roulette</button>
+      <button id="russianTriggerButton" type="button" onclick="pullRussianRouletteTrigger()" disabled>Play round</button>
+      <pre id="russianRouletteState">No Russian Roulette in progress.</pre>
+    </div>
+
+    <div id="normalGameFields">
+      <div class="form-row">
+        <label>Multiplier</label><br />
+        <input id="multiplier" type="number" min="1" step="0.1" value="2" />
+      </div>
+
+      <div class="form-row">
+        <label>Pick / action</label><br />
+        <input id="extra1" type="text" />
+      </div>
+
+      <div class="form-row">
+        <label>Result / card</label><br />
+        <input id="extra2" type="text" />
+      </div>
+
+      <button type="button" onclick="playGame()">Resolve once</button>
+    </div>
+
+    <div id="blackjackControls" style="display:none;">
+      <button type="button" onclick="startBlackjack()">Start blackjack</button>
+      <button id="hitButton" type="button" onclick="blackjackAction('hit')" disabled>Hit</button>
+      <button id="standButton" type="button" onclick="blackjackAction('stand')" disabled>Stand</button>
+      <pre id="blackjackState">No blackjack in progress.</pre>
+    </div>
+  </div>
+
+  <div class="hint">
+    Blackjack uses one random 52-card deck per round. Start a round, then press Hit or Stand. Each step is logged and can be copied.
+  </div>
+
+  <h2>Progress log</h2>
+  <div id="logList" class="log-list"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let players = [];
+    let activeBlackjackPlayerId = null;
+    let activeRussianRouletteSessionId = null;
+    const CHIP_LABELS = {
+      red: 'Red',
+      blue: 'Blue',
+      green: 'Green',
+      yellow: 'Yellow',
+      white: 'White'
+    };
+
+    const logList = document.getElementById('logList');
+    const blackjackStateBox = document.getElementById('blackjackState');
+    const hitButton = document.getElementById('hitButton');
+    const standButton = document.getElementById('standButton');
+    const russianRouletteStateBox = document.getElementById('russianRouletteState');
+    const russianTriggerButton = document.getElementById('russianTriggerButton');
+    const balanceHint = document.getElementById('balanceHint');
+
+    async function loadPlayers() {
+      const res = await fetch('/players');
+      players = await res.json();
+
+      renderPlayerOptions();
+      updateRussianRoulettePlayers();
+      updateBalanceHint();
+    }
+
+    function renderPlayerOptions() {
+      const select = document.getElementById('playerId');
+      const selectedValue = select.value;
+
+      select.innerHTML = players
+        .map((p) => `<option value="${p.id}">${formatPlayerOption(p)}</option>`)
+        .join('');
+
+      if (players.some((p) => String(p.id) === selectedValue)) {
+        select.value = selectedValue;
+      }
+    }
+
+    function formatPlayerOption(player) {
+      const color = document.getElementById('color').value;
+      return `${player.name} (#${player.id}) - ${CHIP_LABELS[color]}:${getChipBalance(player, color)}`;
+    }
+
+    function getChipAmount(value) {
+      return Math.floor(Number(value));
+    }
+
+    function getPlayerById(playerId) {
+      return players.find((p) => p.id === Number(playerId));
+    }
+
+    function getChipBalance(player, color) {
+      return Math.floor(Number(player?.[color] || 0));
+    }
+
+    function validatePlayerBet(playerId, color, amount, label = '플레이어') {
+      const player = getPlayerById(playerId);
+      const bet = getChipAmount(amount);
+
+      if (!Number.isFinite(bet) || bet <= 0) {
+        alert('베팅 수량이 올바르지 않습니다.');
+        return false;
+      }
+
+      if (!player) {
+        alert(`${label}를 찾을 수 없습니다.`);
+        return false;
+      }
+
+      const balance = getChipBalance(player, color);
+
+      if (balance < bet) {
+        alert(`${player.name} 잔고 부족: ${CHIP_LABELS[color]} ${balance}개 보유 / 베팅 ${bet}개`);
+        return false;
+      }
+
+      return true;
+    }
+
+    function validateRussianRouletteBet(participantIds, color, amount) {
+      const bet = getChipAmount(amount);
+
+      if (!Number.isFinite(bet) || bet <= 0) {
+        alert('베팅 수량이 올바르지 않습니다.');
+        return false;
+      }
+
+      const participants = participantIds.map(getPlayerById);
+
+      if (participants.some((player) => !player)) {
+        alert('참가자를 찾을 수 없습니다.');
+        return false;
+      }
+
+      const shortPlayers = participants
+        .filter((player) => getChipBalance(player, color) < bet)
+        .map((player) => `${player.name}: ${CHIP_LABELS[color]} ${getChipBalance(player, color)}개`);
+
+      if (shortPlayers.length) {
+        alert(`잔고 부족으로 시작할 수 없습니다.\n베팅: ${CHIP_LABELS[color]} ${bet}개\n${shortPlayers.join('\n')}`);
+        return false;
+      }
+
+      return true;
+    }
+
+    function updateBalanceHint() {
+      const gameType = document.getElementById('gameType').value;
+      const color = document.getElementById('color').value;
+      const bet = getChipAmount(document.getElementById('amount').value);
+
+      renderPlayerOptions();
+
+      if (gameType === 'russianroulette') {
+        const rows = getRussianRouletteParticipantIds()
+          .map(getPlayerById)
+          .filter(Boolean)
+          .map((player) => {
+            const balance = getChipBalance(player, color);
+            const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
+            return `${player.name} ${balance}개 ${status}`;
+          });
+
+        balanceHint.textContent = rows.length
+          ? `실시간 잔고 (${CHIP_LABELS[color]}): ${rows.join(' / ')}`
+          : '';
+        return;
+      }
+
+      const player = getPlayerById(document.getElementById('playerId').value);
+
+      if (!player) {
+        balanceHint.textContent = '';
+        return;
+      }
+
+      const balance = getChipBalance(player, color);
+      const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '잔고 부족' : '플레이 가능';
+      balanceHint.textContent = `실시간 잔고: ${player.name} ${CHIP_LABELS[color]} ${balance}개 / 베팅 ${Number.isFinite(bet) ? bet : '-'}개 (${status})`;
+    }
+
+    function updateRussianRoulettePlayers() {
+      const participantInputs = document.getElementById('russianParticipantInputs');
+      const participantCount = getRussianRouletteParticipantCount();
+      const previousIds = [...participantInputs.querySelectorAll('.russian-participant-select')]
+        .map((select) => Number(select.value));
+      const usedIds = new Set();
+
+      participantInputs.innerHTML = '';
+
+      for (let index = 0; index < participantCount; index += 1) {
+        let selectedId = previousIds[index];
+
+        if (!players.some((p) => p.id === selectedId) || usedIds.has(selectedId)) {
+          selectedId = players.find((p) => !usedIds.has(p.id))?.id;
+        }
+
+        if (Number.isFinite(selectedId)) {
+          usedIds.add(selectedId);
+        }
+
+        const row = document.createElement('div');
+        const label = document.createElement('label');
+        const select = document.createElement('select');
+
+        row.className = 'participant-row';
+        label.textContent = `Player ${index + 1}`;
+        select.className = 'russian-participant-select';
+        select.onchange = updateBalanceHint;
+        select.innerHTML = '<option value="">Select player</option>' + players
+          .map((p) => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${formatPlayerOption(p)}</option>`)
+          .join('');
+        select.value = Number.isFinite(selectedId) ? String(selectedId) : '';
+
+        row.append(label, select);
+        participantInputs.appendChild(row);
+      }
+
+      updateBalanceHint();
+    }
+
+    function getRussianRouletteParticipantCount() {
+      const count = Math.floor(Number(document.getElementById('russianParticipantCount').value));
+      return Number.isFinite(count) && count >= 2 ? count : 2;
+    }
+
+    function getRussianRouletteParticipantIds() {
+      return [...document.querySelectorAll('.russian-participant-select')]
+        .map((select) => (select.value === '' ? NaN : Number(select.value)));
+    }
+
+    function validateRussianRouletteParticipants(participantIds, participantCount) {
+      if (participantIds.length !== participantCount) {
+        alert(`Choose exactly ${participantCount} participants.`);
+        return false;
+      }
+
+      if (participantIds.some((id) => !Number.isFinite(id))) {
+        alert('Choose every participant.');
+        return false;
+      }
+
+      if (new Set(participantIds).size !== participantIds.length) {
+        alert('Choose different players for every slot.');
+        return false;
+      }
+
+      return true;
+    }
+
+    async function loadLogs() {
+      const res = await fetch('/logs');
+      const logs = await res.json();
+      renderLogs(logs);
+    }
+
+    function updateRouletteDetailInput() {
+      const betType = document.getElementById('rouletteBetType').value;
+      const textWrap = document.getElementById('rouletteDetailTextWrap');
+      const selectWrap = document.getElementById('rouletteDetailSelectWrap');
+      const textInput = document.getElementById('rouletteDetail');
+      const selectInput = document.getElementById('rouletteDetailSelect');
+      const textLabel = document.getElementById('rouletteDetailLabel');
+      const selectLabel = document.getElementById('rouletteDetailSelectLabel');
+      const hint = document.getElementById('rouletteDetailHint');
+
+      const noDetailTypes = ['red', 'black', 'even', 'odd', 'low', 'high'];
+      const selectTypes = ['dozen', 'column'];
+      const textConfig = {
+        number: ['Number', 'Enter one number, 0-36. Example: 17'],
+        split: ['Split numbers', 'Enter two adjacent numbers. Example: 17,20'],
+        street: ['Street start number', 'Enter one number in the row. Example: 10 covers 10,11,12'],
+        corner: ['Corner numbers', 'Enter four corner numbers. Example: 1,2,4,5'],
+        sixline: ['Six line start number', 'Enter one number in the first row. Example: 1 covers 1-6']
+      };
+
+      textInput.value = '';
+      selectInput.innerHTML = '';
+      textWrap.style.display = 'none';
+      selectWrap.style.display = 'none';
+
+      if (noDetailTypes.includes(betType)) {
+        hint.textContent = 'No detail input needed for this bet type.';
+        return;
+      }
+
+      if (selectTypes.includes(betType)) {
+        const labels = betType === 'dozen'
+          ? ['1st dozen (1-12)', '2nd dozen (13-24)', '3rd dozen (25-36)']
+          : ['1st column', '2nd column', '3rd column'];
+
+        selectLabel.textContent = betType === 'dozen' ? 'Dozen' : 'Column';
+        selectInput.innerHTML = labels
+          .map((label, index) => `<option value="${index + 1}">${label}</option>`)
+          .join('');
+        selectWrap.style.display = 'block';
+        hint.textContent = 'Choose 1, 2, or 3.';
+        return;
+      }
+
+      const [label, placeholder] = textConfig[betType] || ['Roulette detail', 'Enter bet detail.'];
+      textLabel.textContent = label;
+      textInput.placeholder = placeholder;
+      textWrap.style.display = 'block';
+      hint.textContent = placeholder;
+    }
+
+    function updateGameFields() {
+      const gameType = document.getElementById('gameType').value;
+      const isBlackjack = gameType === 'blackjack';
+      const isRoulette = gameType === 'roulette';
+      const isHighLow = gameType === 'highlow';
+      const isBaccarat = gameType === 'baccarat';
+      const isRedBlack = gameType === 'redblack';
+      const isRussianRoulette = gameType === 'russianroulette';
+
+      document.getElementById('rouletteFields').style.display = isRoulette ? 'block' : 'none';
+      document.getElementById('highLowFields').style.display = isHighLow ? 'block' : 'none';
+      document.getElementById('baccaratFields').style.display = isBaccarat ? 'block' : 'none';
+      document.getElementById('redBlackFields').style.display = isRedBlack ? 'block' : 'none';
+      document.getElementById('russianRouletteFields').style.display = isRussianRoulette ? 'block' : 'none';
+      document.getElementById('normalGameFields').style.display = isBlackjack || isRoulette || isHighLow || isBaccarat || isRedBlack || isRussianRoulette ? 'none' : 'block';
+      document.getElementById('blackjackControls').style.display = isBlackjack ? 'block' : 'none';
+      document.getElementById('playerField').style.display = isRussianRoulette ? 'none' : 'block';
+
+      if (isRoulette) {
+        updateRouletteDetailInput();
+      }
+
+      if (isRussianRoulette) {
+        updateRussianRoulettePlayers();
+      }
+
+      updateBalanceHint();
+    }
+
+    function getBasePayload() {
+      return {
+        playerId: Number(document.getElementById('playerId').value),
+        color: document.getElementById('color').value,
+        amount: Number(document.getElementById('amount').value)
+      };
+    }
+
+    async function readResponse(res) {
+      const text = await res.text();
+
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch (err) {
+        return { error: text || res.statusText || 'Unexpected server response.' };
+      }
+    }
+
+    async function playGame() {
+      const payload = getBasePayload();
+
+      if (!validatePlayerBet(payload.playerId, payload.color, payload.amount)) {
+        return;
+      }
+
+      const gameType = document.getElementById('gameType').value;
+      const isRoulette = gameType === 'roulette';
+      const isHighLow = gameType === 'highlow';
+      const isBaccarat = gameType === 'baccarat';
+      const isRedBlack = gameType === 'redblack';
+      const extra1 = isRoulette
+        ? document.getElementById('rouletteBetType').value
+        : isHighLow
+          ? document.getElementById('highLowChoice').value
+          : isBaccarat
+            ? document.getElementById('baccaratSide').value
+            : isRedBlack
+              ? document.getElementById('redBlackChoice').value
+        : document.getElementById('extra1').value;
+      const extra2 = isRoulette
+        ? getRouletteDetail()
+        : isHighLow
+          ? ''
+          : isBaccarat
+            ? ''
+            : isRedBlack
+              ? ''
+        : document.getElementById('extra2').value;
+
+      const res = await fetch('/game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          gameType,
+          multiplier: Number(document.getElementById('multiplier').value),
+          extra: {
+            pick: extra1,
+            detail: extra2,
+            result: extra2,
+            choice: extra1,
+            card: extra2,
+            side: extra1,
+            playerSum: extra1,
+            dealerSum: extra2,
+            action: extra1
+          }
+        })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to resolve game.');
+        return;
+      }
+
+      renderLogs(data.logs);
+      alert(gameType === 'roulette'
+        ? `Roulette result: ${data.result} / ${data.win ? 'win' : 'loss'}`
+        : gameType === 'highlow'
+          ? `High Low card: ${data.result} / ${data.win ? 'win' : 'loss or push'}`
+        : gameType === 'baccarat'
+          ? `Baccarat result: ${data.result} / ${data.win ? 'win' : 'loss or push'}`
+        : gameType === 'redblack'
+          ? `Red Black result: ${data.result} / ${data.win ? 'win' : 'loss'}`
+        : data.win ? 'Win processed.' : 'Loss processed.');
+    }
+
+    function getRouletteDetail() {
+      const selectWrap = document.getElementById('rouletteDetailSelectWrap');
+
+      return selectWrap.style.display === 'none'
+        ? document.getElementById('rouletteDetail').value
+        : document.getElementById('rouletteDetailSelect').value;
+    }
+
+    async function startRussianRoulette() {
+      const basePayload = getBasePayload();
+      const participantCount = getRussianRouletteParticipantCount();
+      const participantIds = getRussianRouletteParticipantIds();
+
+      if (!validateRussianRouletteParticipants(participantIds, participantCount)) {
+        return;
+      }
+
+      if (!validateRussianRouletteBet(participantIds, basePayload.color, basePayload.amount)) {
+        return;
+      }
+
+      const payload = {
+        ...basePayload,
+        participantCount,
+        participantIds
+      };
+
+      const res = await fetch('/russian-roulette/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to start Russian Roulette.');
+        return;
+      }
+
+      activeRussianRouletteSessionId = data.state.id;
+      renderRussianRouletteState(data.state);
+      renderLogs(data.logs);
+    }
+
+    async function pullRussianRouletteTrigger() {
+      const res = await fetch('/russian-roulette/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeRussianRouletteSessionId })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to progress Russian Roulette.');
+        return;
+      }
+
+      renderRussianRouletteState(data.state);
+      renderLogs(data.logs);
+
+      if (data.state.done) {
+        activeRussianRouletteSessionId = null;
+        alert(data.state.result);
+      }
+    }
+
+    function renderRussianRouletteState(state) {
+      const activePlayers = state.activePlayers.map((p) => p.name).join(', ') || '-';
+      const eliminatedPlayers = state.eliminatedPlayers.map((p) => `${p.round}R ${p.name}`).join(', ') || '-';
+
+      russianRouletteStateBox.textContent = `Participants: ${state.participants.map((p) => p.name).join(', ')}
+Bet: ${state.color} ${state.bet}
+Pot: ${state.color} ${state.pot}
+Round: ${state.round}
+Active: ${activePlayers}
+Eliminated: ${eliminatedPlayers}
+Result: ${state.lastAction}`;
+
+      russianTriggerButton.disabled = state.done;
+    }
+
+    async function startBlackjack() {
+      const payload = getBasePayload();
+
+      if (!validatePlayerBet(payload.playerId, payload.color, payload.amount)) {
+        return;
+      }
+
+      const res = await fetch('/blackjack/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to start blackjack.');
+        return;
+      }
+
+      activeBlackjackPlayerId = payload.playerId;
+      renderBlackjackState(data.state);
+      renderLogs(data.logs);
+    }
+
+    async function blackjackAction(action) {
+      const playerId = activeBlackjackPlayerId || Number(document.getElementById('playerId').value);
+      const res = await fetch('/blackjack/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, action })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to progress blackjack.');
+        return;
+      }
+
+      renderBlackjackState(data.state);
+      renderLogs(data.logs);
+
+      if (data.state.done) {
+        activeBlackjackPlayerId = null;
+        alert(`Blackjack ${data.state.result}`);
+      }
+    }
+
+    function renderBlackjackState(state) {
+      blackjackStateBox.textContent = `Player cards: ${state.playerCards.join(', ')} (${state.playerValue})
+Open card: ${state.openCard || state.dealerCards[0] || '-'}
+Dealer cards: ${state.dealerCards.join(', ')} (${state.dealerValue})
+Draw result: ${state.lastDraw || '-'}
+Dealer draws: ${state.dealerDraws.length ? state.dealerDraws.join(', ') : '-'}
+Remaining cards: ${state.remainingCards}
+Status: ${state.done ? state.result : 'in progress'}`;
+
+      hitButton.disabled = state.done;
+      standButton.disabled = state.done;
+    }
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Copied.');
+      } catch (err) {
+        console.error(err);
+        alert('Copy failed.');
+      }
+    }
+
+    function renderLogs(logs) {
+      logList.innerHTML = '';
+
+      if (!logs.length) {
+        logList.textContent = 'No progress logs yet.';
+        return;
+      }
+
+      logs.forEach((log) => {
+        const item = document.createElement('div');
+        const button = document.createElement('button');
+        const title = document.createElement('strong');
+        const pre = document.createElement('pre');
+
+        item.className = 'log-item';
+        title.textContent = `${log.type} | ${new Date(log.createdAt).toLocaleString()}`;
+        button.type = 'button';
+        button.textContent = 'Copy this log';
+        button.onclick = () => copyText(log.publicText || log.text);
+        pre.textContent = log.publicText || log.text;
+
+        item.append(title, document.createTextNode(' '), button, pre);
+        logList.appendChild(item);
+      });
+    }
+
+    socket.on('update', (nextPlayers) => {
+      players = nextPlayers;
+      renderPlayerOptions();
+      updateRussianRoulettePlayers();
+      updateBalanceHint();
+    });
+    socket.on('logs', renderLogs);
+
+    loadPlayers();
+    loadLogs();
+    updateGameFields();
+  </script>
+</body>
+</html>

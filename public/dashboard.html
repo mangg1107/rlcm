@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="nav">
+    <a href="/dashboard.html"><button>Dashboard</button></a>
+    <a href="/game.html"><button>Game</button></a>
+    <a href="/exchange.html"><button>Exchange</button></a>
+    <button onclick="reloadPlayers()">Refresh</button>
+    <button onclick="copyLog()">Copy latest public log</button>
+  </div>
+
+  <h1>Dashboard</h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Red</th>
+        <th>Blue</th>
+        <th>Green</th>
+        <th>Yellow</th>
+        <th>White</th>
+      </tr>
+    </thead>
+    <tbody id="tb"></tbody>
+  </table>
+
+  <h2>Latest Public Log</h2>
+  <textarea id="log" readonly></textarea>
+
+  <h2>All Logs</h2>
+  <div class="toolbar">
+    <label for="logTypeFilter">Filter</label>
+    <select id="logTypeFilter" onchange="renderLogs()">
+      <option value="all">All logs</option>
+      <option value="blackjack">Blackjack</option>
+      <option value="roulette">Roulette</option>
+      <option value="highlow">High Low</option>
+      <option value="baccarat">Baccarat</option>
+      <option value="redblack">Red Black</option>
+      <option value="russianroulette">Russian Roulette</option>
+      <option value="balance">Balance</option>
+      <option value="exchange">Chip Move</option>
+      <option value="convert">Convert</option>
+    </select>
+    <span id="logCount"></span>
+  </div>
+  <div id="logList" class="log-list"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const tb = document.getElementById('tb');
+    const logBox = document.getElementById('log');
+    const logList = document.getElementById('logList');
+    const logTypeFilter = document.getElementById('logTypeFilter');
+    const logCount = document.getElementById('logCount');
+    let latestPublicLogText = '';
+    let allLogs = [];
+
+    function render(players) {
+      tb.innerHTML = '';
+      players.forEach((p) => {
+        tb.innerHTML += `
+          <tr>
+            <td><button class="id-button" type="button" onclick="logBalance(${p.id})">${p.id}</button></td>
+            <td>${p.name}</td>
+            <td style="color:red">${p.red || 0}</td>
+            <td style="color:blue">${p.blue || 0}</td>
+            <td style="color:green">${p.green || 0}</td>
+            <td style="color:#c7a000">${p.yellow || 0}</td>
+            <td>${p.white || 0}</td>
+          </tr>
+        `;
+      });
+    }
+
+    async function reloadPlayers() {
+      const res = await fetch('/players');
+      const players = await res.json();
+      render(players);
+
+      const logsRes = await fetch('/logs');
+      allLogs = await logsRes.json();
+      renderLogs();
+    }
+
+    async function readResponse(res) {
+      const text = await res.text();
+
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch (err) {
+        return { error: text || res.statusText || 'Unexpected server response.' };
+      }
+    }
+
+    async function logBalance(playerId) {
+      const res = await fetch(`/players/${playerId}/balance-log`, { method: 'POST' });
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || '잔고 로그 생성 실패');
+        return;
+      }
+
+      renderLogs(data.logs);
+    }
+
+    async function copyLog() {
+      await copyText(latestPublicLogText || logBox.value);
+    }
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Copied.');
+      } catch (err) {
+        console.error(err);
+        alert('Copy failed.');
+      }
+    }
+
+    function getFilteredLogs() {
+      const selectedType = logTypeFilter.value;
+      return selectedType === 'all'
+        ? allLogs
+        : allLogs.filter((log) => log.type === selectedType);
+    }
+
+    function renderLogs(nextLogs) {
+      if (Array.isArray(nextLogs)) {
+        allLogs = nextLogs;
+      }
+
+      logList.innerHTML = '';
+
+      if (!allLogs.length) {
+        latestPublicLogText = '';
+        logBox.value = '';
+        logCount.textContent = '0 logs';
+        logList.textContent = 'No logs yet.';
+        return;
+      }
+
+      latestPublicLogText = allLogs[0].publicText || allLogs[0].text;
+      logBox.value = latestPublicLogText;
+
+      const filteredLogs = getFilteredLogs();
+      logCount.textContent = `${filteredLogs.length} / ${allLogs.length} logs`;
+
+      if (!filteredLogs.length) {
+        logList.textContent = 'No logs for this filter.';
+        return;
+      }
+
+      filteredLogs.forEach((log) => {
+        const item = document.createElement('div');
+        const meta = document.createElement('div');
+        const badge = document.createElement('span');
+        const title = document.createElement('strong');
+        const publicButton = document.createElement('button');
+        const pre = document.createElement('pre');
+
+        item.className = 'log-item';
+        meta.className = 'log-meta';
+        badge.className = 'badge';
+        badge.textContent = log.type;
+        title.textContent = new Date(log.createdAt).toLocaleString();
+        publicButton.type = 'button';
+        publicButton.textContent = 'Copy public log';
+        publicButton.onclick = () => copyText(log.publicText || log.text);
+        pre.textContent = log.text;
+
+        meta.append(badge, title, publicButton);
+        item.append(meta, pre);
+        logList.appendChild(item);
+      });
+    }
+
+    socket.on('update', render);
+    socket.on('log', () => {});
+    socket.on('logs', renderLogs);
+
+    reloadPlayers();
+  </script>
+</body>
+</html>

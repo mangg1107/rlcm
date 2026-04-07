@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Exchange</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="nav">
+    <a href="/dashboard.html"><button>Dashboard</button></a>
+    <a href="/game.html"><button>Game</button></a>
+    <a href="/exchange.html"><button>Exchange</button></a>
+  </div>
+
+  <h1>Exchange</h1>
+
+  <div class="section">
+    <h2>플레이어 간 칩 이동</h2>
+
+    <div class="form-row">
+      <label>보내는 플레이어</label><br />
+      <select id="fromPlayer"></select>
+    </div>
+
+    <div class="form-row">
+      <label>받는 플레이어</label><br />
+      <select id="toPlayer"></select>
+    </div>
+
+    <div class="form-row">
+      <label>칩 색</label><br />
+      <select id="moveColor">
+        <option value="red">🔴 Red</option>
+        <option value="blue">🔵 Blue</option>
+        <option value="green">🟢 Green</option>
+        <option value="yellow">🟡 Yellow</option>
+        <option value="white">⚪ White</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>수량</label><br />
+      <input id="moveAmount" type="number" min="1" />
+    </div>
+
+    <button onclick="sendChip()">전송</button>
+  </div>
+
+  <div class="section">
+    <h2>색 변환 환전</h2>
+
+    <div class="form-row">
+      <label>플레이어</label><br />
+      <select id="convertPlayer"></select>
+    </div>
+
+    <div class="form-row">
+      <label>변환 전</label><br />
+      <select id="fromColor">
+        <option value="red">🔴 Red</option>
+        <option value="blue">🔵 Blue</option>
+        <option value="green">🟢 Green</option>
+        <option value="yellow">🟡 Yellow</option>
+        <option value="white">⚪ White</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>변환 후</label><br />
+      <select id="toColor">
+        <option value="red">🔴 Red</option>
+        <option value="blue">🔵 Blue</option>
+        <option value="green">🟢 Green</option>
+        <option value="yellow">🟡 Yellow</option>
+        <option value="white">⚪ White</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>수량</label><br />
+      <input id="convertAmount" type="number" min="1" />
+    </div>
+
+    <button onclick="convertChip()">환전</button>
+  </div>
+
+  <div class="section">
+    <h2>관리자 환율 설정</h2>
+
+    <div class="form-row">
+      <label>🔴 Red 가치</label><br />
+      <input id="rateRed" type="number" min="1" />
+    </div>
+
+    <div class="form-row">
+      <label>🔵 Blue 가치</label><br />
+      <input id="rateBlue" type="number" min="1" />
+    </div>
+
+    <div class="form-row">
+      <label>🟢 Green 가치</label><br />
+      <input id="rateGreen" type="number" min="1" />
+    </div>
+
+    <div class="form-row">
+      <label>🟡 Yellow 가치</label><br />
+      <input id="rateYellow" type="number" min="1" />
+    </div>
+
+    <div class="form-row">
+      <label>⚪ White 가치</label><br />
+      <input id="rateWhite" type="number" min="1" />
+    </div>
+
+    <button onclick="setRates()">비율 적용</button>
+  </div>
+
+  <script>
+    async function loadPlayers() {
+      const res = await fetch('/players');
+      const players = await res.json();
+
+      const options = players
+        .map((p) => `<option value="${p.id}">${p.name} (#${p.id})</option>`)
+        .join('');
+
+      document.getElementById('fromPlayer').innerHTML = options;
+      document.getElementById('toPlayer').innerHTML = options;
+      document.getElementById('convertPlayer').innerHTML = options;
+    }
+
+    async function loadRates() {
+      const res = await fetch('/rates');
+      const rates = await res.json();
+
+      document.getElementById('rateRed').value = rates.red;
+      document.getElementById('rateBlue').value = rates.blue;
+      document.getElementById('rateGreen').value = rates.green;
+      document.getElementById('rateYellow').value = rates.yellow;
+      document.getElementById('rateWhite').value = rates.white;
+    }
+
+    async function sendChip() {
+      const res = await fetch('/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromId: Number(document.getElementById('fromPlayer').value),
+          toId: Number(document.getElementById('toPlayer').value),
+          color: document.getElementById('moveColor').value,
+          amount: Number(document.getElementById('moveAmount').value)
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || '칩 이동 실패');
+        return;
+      }
+
+      alert('칩 이동 완료');
+    }
+
+    async function convertChip() {
+      const res = await fetch('/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: Number(document.getElementById('convertPlayer').value),
+          fromColor: document.getElementById('fromColor').value,
+          toColor: document.getElementById('toColor').value,
+          amount: Number(document.getElementById('convertAmount').value)
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || '환전 실패');
+        return;
+      }
+
+      alert(`환전 완료: ${data.result}개 지급`);
+    }
+
+    async function setRates() {
+      const res = await fetch('/rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          red: Number(document.getElementById('rateRed').value),
+          blue: Number(document.getElementById('rateBlue').value),
+          green: Number(document.getElementById('rateGreen').value),
+          yellow: Number(document.getElementById('rateYellow').value),
+          white: Number(document.getElementById('rateWhite').value)
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || '비율 적용 실패');
+        return;
+      }
+
+      alert('비율 적용 완료');
+    }
+
+    loadPlayers();
+    loadRates();
+  </script>
+</body>
+</html>
