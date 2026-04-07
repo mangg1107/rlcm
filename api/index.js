@@ -971,8 +971,7 @@ function makeBlackjackPublicLog(player, session, action, resultText) {
   const state = getBlackjackState(session);
 
   if (!session.done) {
-    return `블랙잭
-플레이어 패: ${state.playerCards.join(', ')} (${state.playerValue})
+    return `플레이어 패: ${state.playerCards.join(', ')} (${state.playerValue})
 딜러 패: ${getPublicDealerCards(session)}`;
   }
 
@@ -981,14 +980,13 @@ function makeBlackjackPublicLog(player, session, action, resultText) {
     ? `\n딜러 추가 카드: ${state.dealerDraws.join(', ')}`
     : '';
 
-  return `블랙잭
-플레이어: ${player.name}
+  return `플레이어: ${player.name}
 베팅: ${session.color} ${session.bet}
 행동: ${action}
 플레이어 패: ${state.playerCards.join(', ')} (${state.playerValue})
 딜러 패: ${getPublicDealerCards(session)}${dealerValue}
 이번 결과: ${state.lastDraw || '-'}${dealerDraws}
-결과: ${resultText}${session.done ? `\n플레이어 잔고: ${chipStr(player)}` : ''}`;
+결과: ${resultText}`;
 }
 
 function finishBlackjackSession(player, session) {
@@ -1432,15 +1430,13 @@ function makeBaccaratPublicLog(player, session, action, resultText) {
   const state = getBaccaratState(session);
 
   if (!session.done) {
-    return `바카라
-베팅: ${session.side} / ${session.color} ${session.bet}
+    return `베팅: ${session.side} / ${session.color} ${session.bet}
 PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
 BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
 선택 가능: Hit 또는 Stand`;
   }
 
-  return `바카라
-플레이어: ${player.name}
+  return `플레이어: ${player.name}
 베팅: ${session.side} / ${session.color} ${session.bet}
 행동: ${action}
 PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
@@ -1448,8 +1444,7 @@ BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
 플레이어 추가 카드: ${state.playerThirdCard || '-'}
 뱅커 추가 카드: ${state.bankerThirdCard || '-'}
 결과: ${state.outcome}
-판정: ${resultText}
-플레이어 잔고: ${chipStr(player)}`;
+판정: ${resultText}`;
 }
 
 function playRedBlack(player, color, bet, extra) {
@@ -1533,8 +1528,7 @@ function makeRussianRoulettePublicLog(session) {
   const active = state.activePlayers.map((p) => p.name).join(', ') || '-';
   const eliminated = state.eliminatedPlayers.map((p) => `${p.round}R ${p.name}`).join(', ') || '-';
 
-  return `러시안룰렛
-생존자: ${active}
+  return `생존자: ${active}
 탈락자: ${eliminated}
 라운드: ${state.round}
 결과: ${state.lastAction}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}`;
@@ -1595,6 +1589,10 @@ ${p.name} | 칩: ${color} ${bet}
 배율: ${multiplier}배
 판정: ${win ? '승리' : '패배'}
 현재: ${chipStr(p)}`;
+}
+
+function getLogJudgement(multiplier, win) {
+  return multiplier === 'push' ? '무승부' : win ? '승리' : '패배';
 }
 
 function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
@@ -1662,6 +1660,54 @@ ${p.name} | 칩: ${color} ${amount}
   }
 }
 
+function makeGamePublicLog(gameType, p, color, amount, extra, multiplier, win) {
+  const judgement = getLogJudgement(multiplier, win);
+
+  switch (gameType) {
+    case 'roulette':
+      return `플레이어: ${p.name}
+베팅: ${color} ${amount}
+베팅 종류: ${extra.pick}
+결과: ${extra.result}
+배율: ${multiplier}배
+판정: ${judgement}`;
+    case 'highlow':
+      return `플레이어: ${p.name}
+베팅: ${color} ${amount}
+선택: ${extra.choice}
+오픈 카드: ${extra.card || '-'}
+배율: ${multiplier}배
+판정: ${judgement}`;
+    case 'baccarat':
+      return `플레이어: ${p.name}
+베팅: ${extra.side} / ${color} ${amount}
+결과: ${extra.result}
+배율: ${multiplier}배
+판정: ${judgement}`;
+    case 'blackjack':
+      return `플레이어: ${p.name}
+베팅: ${color} ${amount}
+턴: ${extra.turn || '-'}
+행동: ${extra.action || '-'}
+플레이어: ${extra.playerSum || '-'}
+딜러: ${extra.dealerSum || '-'}
+배율: ${multiplier}배
+판정: ${judgement}`;
+    case 'redblack':
+      return `플레이어: ${p.name}
+베팅: ${color} ${amount}
+선택: ${extra.pick}
+결과: ${extra.result}
+배율: ${multiplier}배
+판정: ${judgement}`;
+    default:
+      return `플레이어: ${p.name}
+베팅: ${color} ${amount}
+배율: ${multiplier}배
+판정: ${judgement}`;
+  }
+}
+
 function makeTransferLog(from, to, color, amount) {
   return `📦 칩 이동
 보내는 사람: ${from.name}
@@ -1672,6 +1718,12 @@ ${from.name}: ${chipStr(from)}
 ${to.name}: ${chipStr(to)}`;
 }
 
+function makeTransferPublicLog(from, to, color, amount) {
+  return `받는 사람: ${to.name}
+보내는 사람: ${from.name}
+이동 칩: ${color} ${amount}`;
+}
+
 function makeConvertLog(p, fromColor, toColor, amount, result) {
   return `💱 환전
 플레이어: ${p.name}
@@ -1680,9 +1732,21 @@ function makeConvertLog(p, fromColor, toColor, amount, result) {
 현재: ${chipStr(p)}`;
 }
 
+function makeConvertPublicLog(p, fromColor, toColor, amount, result) {
+  return `플레이어: ${p.name}
+변환: ${fromColor} ${amount} → ${toColor} ${result}
+기준 비율: ${COLORS.map((color) => `${CHIP_LABELS[color]}=${rates[color]}`).join(', ')}`;
+}
+
 function makeBalanceLog(p) {
   return `현재 잔고
 ID: ${p.id}
+플레이어: ${p.name}
+잔고: ${chipStr(p)}`;
+}
+
+function makeBalancePublicLog(p) {
+  return `ID: ${p.id}
 플레이어: ${p.name}
 잔고: ${chipStr(p)}`;
 }
@@ -1754,7 +1818,7 @@ async function handleBalanceLog(req, res, playerId) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
 
-    const log = await addLog('balance', makeBalanceLog(player));
+    const log = await addLog('balance', makeBalanceLog(player), makeBalancePublicLog(player));
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
@@ -2282,7 +2346,11 @@ app.post('/game', async (req, res) => {
     }
 
     const [log] = await Promise.all([
-      addLog(gameType, makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win)),
+      addLog(
+        gameType,
+        makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win),
+        makeGamePublicLog(gameType, player, color, bet, logExtra, logMultiplier, win)
+      ),
       savePlayers([player])
     ]);
 
@@ -2330,7 +2398,11 @@ app.post('/exchange', async (req, res) => {
     to[color] += moveAmount;
 
     const [log] = await Promise.all([
-      addLog('exchange', makeTransferLog(from, to, color, moveAmount)),
+      addLog(
+        'exchange',
+        makeTransferLog(from, to, color, moveAmount),
+        makeTransferPublicLog(from, to, color, moveAmount)
+      ),
       savePlayers([from, to])
     ]);
 
@@ -2384,7 +2456,11 @@ app.post('/convert', async (req, res) => {
     player[toColor] += result;
 
     const [log] = await Promise.all([
-      addLog('convert', makeConvertLog(player, fromColor, toColor, convertAmount, result)),
+      addLog(
+        'convert',
+        makeConvertLog(player, fromColor, toColor, convertAmount, result),
+        makeConvertPublicLog(player, fromColor, toColor, convertAmount, result)
+      ),
       savePlayers([player])
     ]);
 
