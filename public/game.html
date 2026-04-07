@@ -107,7 +107,10 @@
         </select>
       </div>
 
-      <button type="button" onclick="playGame()">Deal baccarat</button>
+      <button type="button" onclick="startBaccarat()">Start baccarat</button>
+      <button id="baccaratHitButton" type="button" onclick="baccaratAction('hit')" disabled>Hit</button>
+      <button id="baccaratStandButton" type="button" onclick="baccaratAction('stand')" disabled>Stand</button>
+      <pre id="baccaratState">No baccarat in progress.</pre>
     </div>
 
     <div id="redBlackFields" style="display:none;">
@@ -167,7 +170,7 @@
   </div>
 
   <div class="hint">
-    Blackjack uses one random 52-card deck per round. Start a round, then press Hit or Stand. Each step is logged and can be copied.
+    Blackjack uses one random 52-card deck per round. Baccarat uses an 8-deck shoe and lets the player hand choose Hit or Stand. Each step is logged and can be copied.
   </div>
 
   <h2>Progress log</h2>
@@ -176,6 +179,7 @@
   <script>
     let players = [];
     let activeBlackjackPlayerId = null;
+    let activeBaccaratPlayerId = null;
     let activeRussianRouletteSessionId = null;
     const CHIP_LABELS = {
       red: 'Red',
@@ -189,6 +193,9 @@
     const blackjackStateBox = document.getElementById('blackjackState');
     const hitButton = document.getElementById('hitButton');
     const standButton = document.getElementById('standButton');
+    const baccaratStateBox = document.getElementById('baccaratState');
+    const baccaratHitButton = document.getElementById('baccaratHitButton');
+    const baccaratStandButton = document.getElementById('baccaratStandButton');
     const russianRouletteStateBox = document.getElementById('russianRouletteState');
     const russianTriggerButton = document.getElementById('russianTriggerButton');
     const balanceHint = document.getElementById('balanceHint');
@@ -646,6 +653,78 @@ Eliminated: ${eliminatedPlayers}
 Result: ${state.lastAction}`;
 
       russianTriggerButton.disabled = state.done;
+    }
+
+    async function startBaccarat() {
+      const payload = {
+        ...getBasePayload(),
+        side: document.getElementById('baccaratSide').value
+      };
+
+      if (!validatePlayerBet(payload.playerId, payload.color, payload.amount)) {
+        return;
+      }
+
+      const res = await fetch('/api/baccarat/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to start baccarat.');
+        return;
+      }
+
+      activeBaccaratPlayerId = data.state.done ? null : payload.playerId;
+      renderBaccaratState(data.state);
+      renderLogs(data.logs);
+      await loadPlayers();
+
+      if (data.state.done) {
+        alert(`Baccarat ${data.state.outcome}`);
+      }
+    }
+
+    async function baccaratAction(action) {
+      const playerId = activeBaccaratPlayerId || Number(document.getElementById('playerId').value);
+      const res = await fetch('/api/baccarat/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, action })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to progress baccarat.');
+        return;
+      }
+
+      renderBaccaratState(data.state);
+      renderLogs(data.logs);
+      await loadPlayers();
+
+      if (data.state.done) {
+        activeBaccaratPlayerId = null;
+        alert(`Baccarat ${data.state.outcome}`);
+      }
+    }
+
+    function renderBaccaratState(state) {
+      baccaratStateBox.textContent = `Bet side: ${state.side}
+PLAYER cards: ${state.playerCards.join(', ')} (${state.playerTotal})
+BANKER cards: ${state.bankerCards.join(', ')} (${state.bankerTotal})
+Player action: ${state.playerAction || '-'}
+Player third: ${state.playerThirdCard || '-'}
+Banker third: ${state.bankerThirdCard || '-'}
+Remaining cards: ${state.remainingCards}
+Status: ${state.done ? `${state.outcome}${state.push ? ' push' : state.win ? ' win' : ' loss'}` : 'choose Hit or Stand'}`;
+
+      baccaratHitButton.disabled = state.done;
+      baccaratStandButton.disabled = state.done;
     }
 
     async function startBlackjack() {

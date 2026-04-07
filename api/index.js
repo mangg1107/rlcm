@@ -28,7 +28,9 @@ let lastLogText = '';
 let logHistory = [];
 let logSheetReady = false;
 let blackjackSessionSheetReady = false;
+let baccaratSessionSheetReady = false;
 let blackjackSessions = new Map();
+let baccaratSessions = new Map();
 let russianRouletteSessions = new Map();
 const COLORS = ['red', 'blue', 'green', 'yellow', 'white'];
 const CHIP_LABELS = {
@@ -121,6 +123,26 @@ const BLACKJACK_SESSION_HEADER = [
   'dealerDraws',
   'done',
   'result',
+  'updatedAt'
+];
+const BACCARAT_SESSION_SHEET_NAME = '바카라세션';
+const BACCARAT_SESSION_SHEET_REF = `'${BACCARAT_SESSION_SHEET_NAME}'`;
+const BACCARAT_SESSION_HEADER_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A1:M1`;
+const BACCARAT_SESSION_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A:M`;
+const BACCARAT_SESSION_WRITE_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A1`;
+const BACCARAT_SESSION_HEADER = [
+  'playerId',
+  'side',
+  'color',
+  'bet',
+  'shoe',
+  'playerCards',
+  'bankerCards',
+  'playerThirdCard',
+  'bankerThirdCard',
+  'playerAction',
+  'done',
+  'outcome',
   'updatedAt'
 ];
 
@@ -358,6 +380,146 @@ async function deleteBlackjackSession(playerId) {
 
   await writeBlackjackSessionRows(nextRows);
   blackjackSessions.delete(String(playerId));
+}
+
+async function ensureBaccaratSessionSheetHeader() {
+  if (baccaratSessionSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === BACCARAT_SESSION_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: BACCARAT_SESSION_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BACCARAT_SESSION_HEADER_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = BACCARAT_SESSION_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: BACCARAT_SESSION_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [BACCARAT_SESSION_HEADER] }
+    });
+  }
+
+  baccaratSessionSheetReady = true;
+}
+
+function parseBaccaratSessionRow(row) {
+  return {
+    playerId: Number(row[0]),
+    side: row[1] || '',
+    color: row[2] || '',
+    bet: toChipAmount(row[3]),
+    shoe: parseJsonArray(row[4]),
+    playerCards: parseJsonArray(row[5]),
+    bankerCards: parseJsonArray(row[6]),
+    playerThirdCard: row[7] || '',
+    bankerThirdCard: row[8] || '',
+    playerAction: row[9] || '',
+    done: row[10] === 'true',
+    outcome: row[11] || ''
+  };
+}
+
+function baccaratSessionToRow(session) {
+  return [
+    session.playerId,
+    session.side,
+    session.color,
+    session.bet,
+    JSON.stringify(session.shoe || []),
+    JSON.stringify(session.playerCards || []),
+    JSON.stringify(session.bankerCards || []),
+    session.playerThirdCard || '',
+    session.bankerThirdCard || '',
+    session.playerAction || '',
+    session.done ? 'true' : 'false',
+    session.outcome || '',
+    new Date().toISOString()
+  ];
+}
+
+async function loadBaccaratSessionRows() {
+  await ensureBaccaratSessionSheetHeader();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BACCARAT_SESSION_RANGE
+  });
+  return (res.data.values || []).slice(1).filter((row) => row.length);
+}
+
+async function writeBaccaratSessionRows(rows) {
+  await ensureBaccaratSessionSheetHeader();
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BACCARAT_SESSION_RANGE
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: BACCARAT_SESSION_WRITE_RANGE,
+    valueInputOption: 'RAW',
+    requestBody: { values: [BACCARAT_SESSION_HEADER, ...rows] }
+  });
+}
+
+async function loadBaccaratSessionsFromSheet() {
+  const rows = await loadBaccaratSessionRows();
+  const sessions = rows.map(parseBaccaratSessionRow)
+    .filter((session) => Number.isFinite(session.playerId));
+
+  baccaratSessions = new Map(sessions.map((session) => [String(session.playerId), session]));
+  return sessions;
+}
+
+async function getBaccaratSession(playerId) {
+  await loadBaccaratSessionsFromSheet();
+  return baccaratSessions.get(String(playerId));
+}
+
+async function saveBaccaratSession(session) {
+  const rows = await loadBaccaratSessionRows();
+  const nextRows = rows
+    .filter((row) => Number(row[0]) !== Number(session.playerId));
+
+  nextRows.push(baccaratSessionToRow(session));
+  await writeBaccaratSessionRows(nextRows);
+  baccaratSessions.set(String(session.playerId), session);
+}
+
+async function deleteBaccaratSession(playerId) {
+  const rows = await loadBaccaratSessionRows();
+  const nextRows = rows
+    .filter((row) => Number(row[0]) !== Number(playerId));
+
+  await writeBaccaratSessionRows(nextRows);
+  baccaratSessions.delete(String(playerId));
 }
 
 function parseLogRow(row) {
@@ -917,6 +1079,134 @@ Banker third: ${bankerThirdCard || '-'}`,
   };
 }
 
+function isValidBaccaratSide(side) {
+  return ['PLAYER', 'BANKER', 'TIE'].includes(side);
+}
+
+function getBaccaratPayout(side) {
+  return side === 'TIE' ? 8 : side === 'BANKER' ? 0.95 : 1;
+}
+
+function isBaccaratNatural(session) {
+  return getBaccaratTotal(session.playerCards) >= 8 || getBaccaratTotal(session.bankerCards) >= 8;
+}
+
+function getBaccaratState(session) {
+  const playerTotal = getBaccaratTotal(session.playerCards);
+  const bankerTotal = getBaccaratTotal(session.bankerCards);
+  const push = session.outcome === 'TIE' && session.side !== 'TIE';
+  const win = session.side === session.outcome;
+
+  return {
+    playerId: session.playerId,
+    side: session.side,
+    color: session.color,
+    bet: session.bet,
+    playerCards: session.playerCards,
+    bankerCards: session.bankerCards,
+    playerTotal,
+    bankerTotal,
+    playerThirdCard: session.playerThirdCard || '',
+    bankerThirdCard: session.bankerThirdCard || '',
+    playerAction: session.playerAction || '',
+    remainingCards: session.shoe ? session.shoe.length : 0,
+    done: session.done || false,
+    outcome: session.outcome || '',
+    push,
+    win
+  };
+}
+
+function settleBaccaratBet(player, session) {
+  const push = session.outcome === 'TIE' && session.side !== 'TIE';
+  const win = session.side === session.outcome;
+
+  if (win) {
+    player[session.color] += toChipAmount(session.bet * getBaccaratPayout(session.side));
+  } else if (!push) {
+    player[session.color] -= session.bet;
+  }
+
+  return { win, push };
+}
+
+function finishBaccaratSession(player, session) {
+  if (!isBaccaratNatural(session)) {
+    const bankerTotal = getBaccaratTotal(session.bankerCards);
+
+    if (session.playerThirdCard) {
+      const playerThirdValue = getBaccaratCardValue(session.playerThirdCard);
+
+      if (shouldBankerDraw(bankerTotal, playerThirdValue)) {
+        session.bankerThirdCard = drawBaccaratCard(session.shoe);
+        session.bankerCards.push(session.bankerThirdCard);
+      }
+    } else if (bankerTotal <= 5) {
+      session.bankerThirdCard = drawBaccaratCard(session.shoe);
+      session.bankerCards.push(session.bankerThirdCard);
+    }
+  }
+
+  const playerTotal = getBaccaratTotal(session.playerCards);
+  const bankerTotal = getBaccaratTotal(session.bankerCards);
+
+  session.outcome = playerTotal > bankerTotal
+    ? 'PLAYER'
+    : bankerTotal > playerTotal
+      ? 'BANKER'
+      : 'TIE';
+  session.done = true;
+
+  const { win, push } = settleBaccaratBet(player, session);
+  return push ? '무승부(push)' : win ? '승리' : '패배';
+}
+
+function baccaratStateText(session) {
+  const state = getBaccaratState(session);
+
+  return `PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
+BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
+플레이어 선택: ${state.playerAction || '-'}
+플레이어 추가 카드: ${state.playerThirdCard || '-'}
+뱅커 추가 카드: ${state.bankerThirdCard || '-'}
+남은 카드: ${state.remainingCards}`;
+}
+
+function makeBaccaratProgressLog(player, session, action, resultText) {
+  return `바카라 진행
+플레이어: ${player.name}
+베팅: ${session.side} / ${session.color} ${session.bet}
+행동: ${action}
+${baccaratStateText(session)}
+결과: ${session.outcome || resultText}
+판정: ${resultText}
+현재: ${chipStr(player)}`;
+}
+
+function makeBaccaratPublicLog(player, session, action, resultText) {
+  const state = getBaccaratState(session);
+
+  if (!session.done) {
+    return `바카라
+베팅: ${session.side} / ${session.color} ${session.bet}
+PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
+BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
+선택 가능: Hit 또는 Stand`;
+  }
+
+  return `바카라
+플레이어: ${player.name}
+베팅: ${session.side} / ${session.color} ${session.bet}
+행동: ${action}
+PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
+BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
+플레이어 추가 카드: ${state.playerThirdCard || '-'}
+뱅커 추가 카드: ${state.bankerThirdCard || '-'}
+결과: ${state.outcome}
+판정: ${resultText}
+플레이어 잔고: ${chipStr(player)}`;
+}
+
 function playRedBlack(player, color, bet, extra) {
   const pick = String(extra.pick || '').toUpperCase();
 
@@ -1382,6 +1672,132 @@ app.post('/blackjack/action', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '블랙잭 진행 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/baccarat/start', async (req, res) => {
+  try {
+    await loadSheet();
+
+    const { playerId, color, amount, side } = req.body;
+    const player = getPlayerById(playerId);
+    const bet = toChipAmount(amount);
+    const nextSide = String(side || '').toUpperCase();
+
+    if (!player) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    if (!validateColor(color)) {
+      return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
+    }
+
+    if (!Number.isFinite(bet) || bet <= 0) {
+      return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
+    }
+
+    if (!isValidBaccaratSide(nextSide)) {
+      return res.status(400).json({ error: '바카라 선택은 PLAYER, BANKER, TIE 중 하나여야 합니다.' });
+    }
+
+    if (player[color] < bet) {
+      return res.status(400).json({ error: '보유 칩이 부족합니다.' });
+    }
+
+    const shoe = createBaccaratShoe();
+    const playerCards = [drawBaccaratCard(shoe), drawBaccaratCard(shoe)];
+    const bankerCards = [drawBaccaratCard(shoe), drawBaccaratCard(shoe)];
+    const session = {
+      playerId: player.id,
+      side: nextSide,
+      color,
+      bet,
+      shoe,
+      playerCards,
+      bankerCards,
+      playerThirdCard: '',
+      bankerThirdCard: '',
+      playerAction: '',
+      done: false,
+      outcome: ''
+    };
+
+    let resultText = '플레이어 선택 대기';
+    if (isBaccaratNatural(session)) {
+      session.playerAction = 'natural';
+      resultText = finishBaccaratSession(player, session);
+      await saveSheet();
+      await deleteBaccaratSession(player.id);
+      emitRealtime('update', players);
+    } else {
+      await saveBaccaratSession(session);
+    }
+
+    const log = await addLog(
+      'baccarat',
+      makeBaccaratProgressLog(player, session, 'start', resultText),
+      makeBaccaratPublicLog(player, session, 'start', resultText)
+    );
+
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: logHistory });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '바카라 시작 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/baccarat/action', async (req, res) => {
+  try {
+    await loadSheet();
+
+    const { playerId, action } = req.body;
+    const player = getPlayerById(playerId);
+    const nextAction = String(action || '').toLowerCase();
+
+    if (!player) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    const session = await getBaccaratSession(playerId);
+
+    if (!session) {
+      return res.status(400).json({ error: '진행 중인 바카라가 없습니다.' });
+    }
+
+    if (!['hit', 'stand'].includes(nextAction)) {
+      return res.status(400).json({ error: '바카라 행동은 hit 또는 stand여야 합니다.' });
+    }
+
+    if (nextAction === 'hit') {
+      const card = drawBaccaratCard(session.shoe);
+      session.playerCards.push(card);
+      session.playerThirdCard = card;
+      session.playerAction = 'hit';
+    } else {
+      session.playerAction = 'stand';
+    }
+
+    const resultText = finishBaccaratSession(player, session);
+    await saveSheet();
+    await deleteBaccaratSession(playerId);
+
+    const log = await addLog(
+      'baccarat',
+      makeBaccaratProgressLog(player, session, nextAction, resultText),
+      makeBaccaratPublicLog(player, session, nextAction, resultText)
+    );
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    return res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: logHistory });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '바카라 진행 중 오류가 발생했습니다.' });
   }
 });
 
