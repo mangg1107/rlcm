@@ -227,7 +227,9 @@ button + button {
 /* ── Table ── */
 .table-wrapper {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -243,6 +245,7 @@ table {
 }
 
 .table-wrapper table {
+  display: table;
   border: none;
   border-radius: 0;
   margin-bottom: 0;
@@ -556,13 +559,26 @@ textarea:focus {
     padding: var(--space-sm);
   }
 
-  /* Table: scroll wrapper preferred; fallback for bare tables */
-  table {
+  .table-wrapper {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .table-wrapper table {
+    display: table;
+    width: 100%;
+    min-width: 640px;
+  }
+
+  /* Fallback for bare tables */
+  body > table {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     white-space: nowrap;
-    min-width: unset;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   textarea {
