@@ -58,22 +58,29 @@ function normalizePrivateKey(value) {
 
 function getGoogleAuthConfig() {
   const scopes = ['https://www.googleapis.com/auth/spreadsheets'];
+  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL?.trim();
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.trim();
 
-  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+  if (serviceAccountJson) {
     return {
-      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+      credentials: JSON.parse(serviceAccountJson),
       scopes
     };
   }
 
-  if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+  if (clientEmail && privateKey) {
     return {
       credentials: {
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY)
+        client_email: clientEmail,
+        private_key: normalizePrivateKey(privateKey)
       },
       scopes
     };
+  }
+
+  if (process.env.VERCEL) {
+    throw new Error('Google Sheets 인증 환경변수가 없습니다. Vercel에 GOOGLE_SERVICE_ACCOUNT_JSON 또는 GOOGLE_CLIENT_EMAIL/GOOGLE_PRIVATE_KEY를 설정하세요.');
   }
 
   return {
