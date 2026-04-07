@@ -118,7 +118,7 @@
 
   <script>
     async function loadPlayers() {
-      const res = await fetch('/players');
+      const res = await fetch('/api/players');
       const players = await res.json();
 
       const options = players
@@ -131,7 +131,7 @@
     }
 
     async function loadRates() {
-      const res = await fetch('/rates');
+      const res = await fetch('/api/rates');
       const rates = await res.json();
 
       document.getElementById('rateRed').value = rates.red;
@@ -142,7 +142,7 @@
     }
 
     async function sendChip() {
-      const res = await fetch('/exchange', {
+      const res = await fetch('/api/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -164,7 +164,7 @@
     }
 
     async function convertChip() {
-      const res = await fetch('/convert', {
+      const res = await fetch('/api/convert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -186,7 +186,7 @@
     }
 
     async function setRates() {
-      const res = await fetch('/rates', {
+      const res = await fetch('/api/rates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -210,6 +210,8 @@
 
     loadPlayers();
     loadRates();
+    setInterval(loadPlayers, 3000);
+    setInterval(loadRates, 5000);
   </script>
 </body>
 </html>

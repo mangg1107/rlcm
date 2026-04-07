@@ -173,9 +173,7 @@
   <h2>Progress log</h2>
   <div id="logList" class="log-list"></div>
 
-  <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();
     let players = [];
     let activeBlackjackPlayerId = null;
     let activeRussianRouletteSessionId = null;
@@ -196,7 +194,7 @@
     const balanceHint = document.getElementById('balanceHint');
 
     async function loadPlayers() {
-      const res = await fetch('/players');
+      const res = await fetch('/api/players');
       players = await res.json();
 
       renderPlayerOptions();
@@ -390,7 +388,7 @@
     }
 
     async function loadLogs() {
-      const res = await fetch('/logs');
+      const res = await fetch('/api/logs');
       const logs = await res.json();
       renderLogs(logs);
     }
@@ -524,7 +522,7 @@
               ? ''
         : document.getElementById('extra2').value;
 
-      const res = await fetch('/game', {
+      const res = await fetch('/api/game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -591,7 +589,7 @@
         participantIds
       };
 
-      const res = await fetch('/russian-roulette/start', {
+      const res = await fetch('/api/russian-roulette/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -610,7 +608,7 @@
     }
 
     async function pullRussianRouletteTrigger() {
-      const res = await fetch('/russian-roulette/trigger', {
+      const res = await fetch('/api/russian-roulette/trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: activeRussianRouletteSessionId })
@@ -654,7 +652,7 @@ Result: ${state.lastAction}`;
         return;
       }
 
-      const res = await fetch('/blackjack/start', {
+      const res = await fetch('/api/blackjack/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -674,7 +672,7 @@ Result: ${state.lastAction}`;
 
     async function blackjackAction(action) {
       const playerId = activeBlackjackPlayerId || Number(document.getElementById('playerId').value);
-      const res = await fetch('/blackjack/action', {
+      const res = await fetch('/api/blackjack/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playerId, action })
@@ -745,17 +743,11 @@ Status: ${state.done ? state.result : 'in progress'}`;
       });
     }
 
-    socket.on('update', (nextPlayers) => {
-      players = nextPlayers;
-      renderPlayerOptions();
-      updateRussianRoulettePlayers();
-      updateBalanceHint();
-    });
-    socket.on('logs', renderLogs);
-
     loadPlayers();
     loadLogs();
     updateGameFields();
+    setInterval(loadPlayers, 3000);
+    setInterval(loadLogs, 3000);
   </script>
 </body>
 </html>
