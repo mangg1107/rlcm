@@ -7,6 +7,7 @@
 - API 함수는 `api/`에 둡니다.
 - 브라우저 코드는 `/api/...` 경로로 API를 호출합니다.
 - Google Sheets 인증은 Vercel 환경변수로 넣습니다.
+- 로그는 `로그` 시트에 저장합니다. 없으면 API가 자동으로 만들고, 헤더는 `id, type, text, publicText, createdAt`을 사용합니다.
 
 환경변수 방식 중 하나를 사용하세요.
 

@@ -26,6 +26,7 @@ function createApiApp(options = {}) {
 let players = [];
 let lastLogText = '';
 let logHistory = [];
+let logSheetReady = false;
 let blackjackSessions = new Map();
 let russianRouletteSessions = new Map();
 const COLORS = ['red', 'blue', 'green', 'yellow', 'white'];
@@ -42,6 +43,19 @@ let rates = { red: 1, blue: 3, green: 5, yellow: 10, white: 15 };
 // =========================
 // 🔑 Google Sheets 설정
 // =========================
+function normalizePrivateKey(value) {
+  let key = String(value || '').trim();
+
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1);
+  }
+
+  return key.replace(/\\n/g, '\n');
+}
+
 function getGoogleAuthConfig() {
   const scopes = ['https://www.googleapis.com/auth/spreadsheets'];
 
@@ -56,7 +70,7 @@ function getGoogleAuthConfig() {
     return {
       credentials: {
         client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        private_key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY)
       },
       scopes
     };
@@ -77,6 +91,11 @@ const SPREADSHEET_ID = '1d9s84o9LrVdncnWCNC85Vjnml4uyjp-rkMgqXkfesls';
 
 const PLAYER_RANGE = '플레이어!A:G';
 const PLAYER_WRITE_RANGE = '플레이어!A1';
+const LOG_SHEET_NAME = '로그';
+const LOG_HEADER_RANGE = `${LOG_SHEET_NAME}!A1:E1`;
+const LOG_RANGE = `${LOG_SHEET_NAME}!A:E`;
+const LOG_APPEND_RANGE = `${LOG_SHEET_NAME}!A:E`;
+const LOG_HEADER = ['id', 'type', 'text', 'publicText', 'createdAt'];
 
 // =========================
 // 📥 시트 → 서버
@@ -122,6 +141,98 @@ async function saveSheet() {
   });
 }
 
+async function ensureLogSheetHeader() {
+  if (logSheetReady) {
+    return;
+  }
+
+  let values = [];
+
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: LOG_HEADER_RANGE
+    });
+    values = res.data.values || [];
+  } catch (err) {
+    const status = err.code || err.response?.status;
+
+    if (status !== 400) {
+      throw err;
+    }
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: LOG_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const header = values[0] || [];
+  const hasHeader = LOG_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: LOG_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [LOG_HEADER] }
+    });
+  }
+
+  logSheetReady = true;
+}
+
+function parseLogRow(row) {
+  return {
+    id: Number(row[0]) || Date.parse(row[4]) || 0,
+    type: row[1] || '',
+    text: row[2] || '',
+    publicText: row[3] || row[2] || '',
+    createdAt: row[4] || new Date(Number(row[0]) || Date.now()).toISOString()
+  };
+}
+
+async function loadLogHistory() {
+  await ensureLogSheetHeader();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: LOG_RANGE
+  });
+
+  const rows = res.data.values || [];
+  logHistory = rows
+    .slice(1)
+    .filter((row) => row.length)
+    .map(parseLogRow)
+    .reverse();
+
+  lastLogText = logHistory[0]?.text || '';
+  return logHistory;
+}
+
+async function appendLogToSheet(log) {
+  await ensureLogSheetHeader();
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: LOG_APPEND_RANGE,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: [[log.id, log.type, log.text, log.publicText, log.createdAt]]
+    }
+  });
+}
+
 // =========================
 // 🧰 공통 함수
 // =========================
@@ -145,7 +256,7 @@ function getPlayerById(playerId) {
   return players.find((p) => p.id === Number(playerId));
 }
 
-function addLog(type, text, publicText = text) {
+async function addLog(type, text, publicText = text) {
   lastLogText = text;
 
   const log = {
@@ -157,6 +268,8 @@ function addLog(type, text, publicText = text) {
   };
 
   logHistory = [log, ...logHistory];
+  await appendLogToSheet(log);
+  await loadLogHistory();
   return log;
 }
 
@@ -861,12 +974,24 @@ app.get('/players', async (req, res) => {
 });
 
 // 마지막 로그 조회
-app.get('/logtext', (req, res) => {
-  res.send(lastLogText);
+app.get('/logtext', async (req, res) => {
+  try {
+    const logs = await loadLogHistory();
+    res.send(logs[0]?.text || lastLogText);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('로그를 불러오지 못했습니다.');
+  }
 });
 
-app.get('/logs', (req, res) => {
-  res.json(logHistory);
+app.get('/logs', async (req, res) => {
+  try {
+    const logs = await loadLogHistory();
+    res.json(logs);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '로그를 불러오지 못했습니다.' });
+  }
 });
 
 app.post('/players/:playerId/balance-log', async (req, res) => {
@@ -879,7 +1004,7 @@ app.post('/players/:playerId/balance-log', async (req, res) => {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
 
-    const log = addLog('balance', makeBalanceLog(player));
+    const log = await addLog('balance', makeBalanceLog(player));
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
@@ -952,7 +1077,7 @@ app.post('/blackjack/start', async (req, res) => {
 
     blackjackSessions.set(String(player.id), session);
 
-    const log = addLog(
+    const log = await addLog(
       'blackjack',
       makeBlackjackProgressLog(player, session, 'start', '진행 중'),
       makeBlackjackPublicLog(player, session, 'start', '진행 중')
@@ -996,7 +1121,7 @@ app.post('/blackjack/action', async (req, res) => {
         emitRealtime('update', players);
       }
 
-      const log = addLog(
+      const log = await addLog(
         'blackjack',
         makeBlackjackProgressLog(player, session, 'hit', resultText),
         makeBlackjackPublicLog(player, session, 'hit', resultText)
@@ -1012,7 +1137,7 @@ app.post('/blackjack/action', async (req, res) => {
       const resultText = finishBlackjackSession(player, session);
       await saveSheet();
 
-      const log = addLog(
+      const log = await addLog(
         'blackjack',
         makeBlackjackProgressLog(player, session, 'stand', resultText),
         makeBlackjackPublicLog(player, session, 'stand', resultText)
@@ -1090,7 +1215,7 @@ app.post('/russian-roulette/start', async (req, res) => {
     russianRouletteSessions.set(session.id, session);
     await saveSheet();
 
-    const log = addLog(
+    const log = await addLog(
       'russianroulette',
       makeRussianRouletteLog(session),
       makeRussianRoulettePublicLog(session)
@@ -1145,7 +1270,7 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       await saveSheet();
       russianRouletteSessions.delete(String(sessionId));
 
-      const log = addLog(
+      const log = await addLog(
         'russianroulette',
         makeRussianRouletteLog(session),
         makeRussianRoulettePublicLog(session)
@@ -1160,7 +1285,7 @@ app.post('/russian-roulette/trigger', async (req, res) => {
 
     session.round += 1;
 
-    const log = addLog(
+    const log = await addLog(
       'russianroulette',
       makeRussianRouletteLog(session),
       makeRussianRoulettePublicLog(session)
@@ -1246,7 +1371,7 @@ app.post('/game', async (req, res) => {
       }
     }
 
-    const log = addLog(gameType, makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win));
+    const log = await addLog(gameType, makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win));
 
     await saveSheet();
 
@@ -1294,7 +1419,7 @@ app.post('/exchange', async (req, res) => {
     from[color] -= moveAmount;
     to[color] += moveAmount;
 
-    const log = addLog('exchange', makeTransferLog(from, to, color, moveAmount));
+    const log = await addLog('exchange', makeTransferLog(from, to, color, moveAmount));
 
     await saveSheet();
 
@@ -1348,7 +1473,7 @@ app.post('/convert', async (req, res) => {
     player[fromColor] -= convertAmount;
     player[toColor] += result;
 
-    const log = addLog('convert', makeConvertLog(player, fromColor, toColor, convertAmount, result));
+    const log = await addLog('convert', makeConvertLog(player, fromColor, toColor, convertAmount, result));
 
     await saveSheet();
 
@@ -1380,3 +1505,4 @@ const { app } = createApiApp();
 
 module.exports = app;
 module.exports.createApiApp = createApiApp;
+
