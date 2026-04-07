@@ -116,7 +116,6 @@
       }
 
       renderLogs(data.logs);
-      await reloadPlayers();
     }
 
     async function copyLog() {
@@ -140,11 +139,28 @@
         : allLogs.filter((log) => log.type === selectedType);
     }
 
-    function renderLogs(nextLogs) {
-      if (Array.isArray(nextLogs)) {
-        allLogs = nextLogs;
+    function mergeLogs(logs) {
+      if (Array.isArray(logs)) {
+        const seen = new Set();
+        allLogs = [...logs, ...allLogs]
+          .filter((log) => {
+            const key = log.id || `${log.type}-${log.createdAt}-${log.text}`;
+
+            if (seen.has(key)) {
+              return false;
+            }
+
+            seen.add(key);
+            return true;
+          })
+          .slice(0, 100);
       }
 
+      return allLogs;
+    }
+
+    function renderLogs(nextLogs) {
+      mergeLogs(nextLogs);
       logList.innerHTML = '';
 
       if (!allLogs.length) {

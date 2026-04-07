@@ -855,9 +855,17 @@ function getPlayerById(playerId) {
   return players.find((p) => p.id === Number(playerId));
 }
 
-async function addLog(type, text, publicText = text) {
-  lastLogText = text;
+function serializePlayers(playerList = players) {
+  return playerList
+    .filter(Boolean)
+    .map((player) => ({
+      id: player.id,
+      name: player.name,
+      ...Object.fromEntries(COLORS.map((color) => [color, player[color] || 0]))
+    }));
+}
 
+async function addLog(type, text, publicText = text) {
   const log = {
     id: Date.now(),
     type,
@@ -866,9 +874,10 @@ async function addLog(type, text, publicText = text) {
     createdAt: new Date().toISOString()
   };
 
-  logHistory = [log, ...logHistory];
   await appendLogToSheet(log);
-  await loadLogHistory(DEFAULT_LOG_LIMIT);
+
+  lastLogText = text;
+  logHistory = [log, ...logHistory].slice(0, DEFAULT_LOG_LIMIT);
   return log;
 }
 
@@ -1728,7 +1737,7 @@ app.get('/debug/env', (req, res) => {
 app.post('/logs/test', async (req, res) => {
   try {
     const log = await addLog('test', `로그 저장 테스트\ncreatedAt: ${new Date().toISOString()}`);
-    res.json({ ok: true, log, logs: logHistory });
+    res.json({ ok: true, log, logs: [log] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '로그 저장 테스트 실패', detail: getErrorDetail(err) });
@@ -1751,7 +1760,7 @@ async function handleBalanceLog(req, res, playerId) {
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, log: log.text, logs: logHistory });
+    res.json({ ok: true, log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '잔고 로그를 생성하지 못했습니다.', detail: getErrorDetail(err) });
@@ -1823,18 +1832,19 @@ app.post('/blackjack/start', async (req, res) => {
       lastDraw: `시작 카드: 플레이어 ${playerCards.join(', ')} / 딜러 ${dealerCards.join(', ')}`
     };
 
-    await saveBlackjackSession(session);
-
-    const log = await addLog(
-      'blackjack',
-      makeBlackjackProgressLog(player, session, 'start', '진행 중'),
-      makeBlackjackPublicLog(player, session, 'start', '진행 중')
-    );
+    const [log] = await Promise.all([
+      addLog(
+        'blackjack',
+        makeBlackjackProgressLog(player, session, 'start', '진행 중'),
+        makeBlackjackPublicLog(player, session, 'start', '진행 중')
+      ),
+      saveBlackjackSession(session)
+    ]);
 
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: logHistory });
+    res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '블랙잭 시작 중 오류가 발생했습니다.' });
@@ -1863,43 +1873,55 @@ app.post('/blackjack/action', async (req, res) => {
       session.lastDraw = `플레이어 hit: ${card}`;
 
       let resultText = '진행 중';
+      let log;
+
       if (getBlackjackHandValue(session.playerCards) > 21) {
         resultText = finishBlackjackSession(player, session);
-        await savePlayers([player]);
-        await deleteBlackjackSession(playerId);
+        [log] = await Promise.all([
+          addLog(
+            'blackjack',
+            makeBlackjackProgressLog(player, session, 'hit', resultText),
+            makeBlackjackPublicLog(player, session, 'hit', resultText)
+          ),
+          savePlayers([player]),
+          deleteBlackjackSession(playerId)
+        ]);
         emitRealtime('update', players);
       } else {
-        await saveBlackjackSession(session);
+        [log] = await Promise.all([
+          addLog(
+            'blackjack',
+            makeBlackjackProgressLog(player, session, 'hit', resultText),
+            makeBlackjackPublicLog(player, session, 'hit', resultText)
+          ),
+          saveBlackjackSession(session)
+        ]);
       }
 
-      const log = await addLog(
-        'blackjack',
-        makeBlackjackProgressLog(player, session, 'hit', resultText),
-        makeBlackjackPublicLog(player, session, 'hit', resultText)
-      );
       emitRealtime('log', lastLogText);
       emitRealtime('logs', logHistory);
 
-      return res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: logHistory });
+      return res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
     }
 
     if (action === 'stand') {
       session.lastDraw = '플레이어 stand';
       const resultText = finishBlackjackSession(player, session);
-      await savePlayers([player]);
-      await deleteBlackjackSession(playerId);
-
-      const log = await addLog(
-        'blackjack',
-        makeBlackjackProgressLog(player, session, 'stand', resultText),
-        makeBlackjackPublicLog(player, session, 'stand', resultText)
-      );
+      const [log] = await Promise.all([
+        addLog(
+          'blackjack',
+          makeBlackjackProgressLog(player, session, 'stand', resultText),
+          makeBlackjackPublicLog(player, session, 'stand', resultText)
+        ),
+        savePlayers([player]),
+        deleteBlackjackSession(playerId)
+      ]);
 
       emitRealtime('update', players);
       emitRealtime('log', lastLogText);
       emitRealtime('logs', logHistory);
 
-      return res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: logHistory });
+      return res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
     }
 
     return res.status(400).json({ error: '블랙잭 행동이 올바르지 않습니다.' });
@@ -1956,26 +1978,36 @@ app.post('/baccarat/start', async (req, res) => {
     };
 
     let resultText = '플레이어 선택 대기';
+    let log;
+
     if (isBaccaratNatural(session)) {
       session.playerAction = 'natural';
       resultText = finishBaccaratSession(player, session);
-      await savePlayers([player]);
-      await deleteBaccaratSession(player.id);
+      [log] = await Promise.all([
+        addLog(
+          'baccarat',
+          makeBaccaratProgressLog(player, session, 'start', resultText),
+          makeBaccaratPublicLog(player, session, 'start', resultText)
+        ),
+        savePlayers([player]),
+        deleteBaccaratSession(player.id)
+      ]);
       emitRealtime('update', players);
     } else {
-      await saveBaccaratSession(session);
+      [log] = await Promise.all([
+        addLog(
+          'baccarat',
+          makeBaccaratProgressLog(player, session, 'start', resultText),
+          makeBaccaratPublicLog(player, session, 'start', resultText)
+        ),
+        saveBaccaratSession(session)
+      ]);
     }
-
-    const log = await addLog(
-      'baccarat',
-      makeBaccaratProgressLog(player, session, 'start', resultText),
-      makeBaccaratPublicLog(player, session, 'start', resultText)
-    );
 
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: logHistory });
+    res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '바카라 시작 중 오류가 발생했습니다.' });
@@ -2013,20 +2045,21 @@ app.post('/baccarat/action', async (req, res) => {
     }
 
     const resultText = finishBaccaratSession(player, session);
-    await savePlayers([player]);
-    await deleteBaccaratSession(playerId);
-
-    const log = await addLog(
-      'baccarat',
-      makeBaccaratProgressLog(player, session, nextAction, resultText),
-      makeBaccaratPublicLog(player, session, nextAction, resultText)
-    );
+    const [log] = await Promise.all([
+      addLog(
+        'baccarat',
+        makeBaccaratProgressLog(player, session, nextAction, resultText),
+        makeBaccaratPublicLog(player, session, nextAction, resultText)
+      ),
+      savePlayers([player]),
+      deleteBaccaratSession(playerId)
+    ]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    return res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: logHistory });
+    return res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '바카라 진행 중 오류가 발생했습니다.' });
@@ -2088,19 +2121,20 @@ app.post('/russian-roulette/start', async (req, res) => {
     };
 
     russianRouletteSessions.set(session.id, session);
-    await savePlayers(participants);
-
-    const log = await addLog(
-      'russianroulette',
-      makeRussianRouletteLog(session),
-      makeRussianRoulettePublicLog(session)
-    );
+    const [log] = await Promise.all([
+      addLog(
+        'russianroulette',
+        makeRussianRouletteLog(session),
+        makeRussianRoulettePublicLog(session)
+      ),
+      savePlayers(participants)
+    ]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, state: getRussianRouletteState(session), log: log.text, logs: logHistory });
+    res.json({ ok: true, state: getRussianRouletteState(session), log: log.text, logs: [log], players: serializePlayers(participants) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '러시안룰렛 시작 중 오류가 발생했습니다.' });
@@ -2142,20 +2176,22 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       session.result = `${winner.name} 승리`;
       session.lastAction += `. 최종 승자: ${winner.name}. 팟 ${session.color} ${session.pot} 지급.`;
 
-      await savePlayers([winner]);
       russianRouletteSessions.delete(String(sessionId));
 
-      const log = await addLog(
-        'russianroulette',
-        makeRussianRouletteLog(session),
-        makeRussianRoulettePublicLog(session)
-      );
+      const [log] = await Promise.all([
+        addLog(
+          'russianroulette',
+          makeRussianRouletteLog(session),
+          makeRussianRoulettePublicLog(session)
+        ),
+        savePlayers([winner])
+      ]);
 
       emitRealtime('update', players);
       emitRealtime('log', lastLogText);
       emitRealtime('logs', logHistory);
 
-      return res.json({ ok: true, fired: true, state: getRussianRouletteState(session), log: log.text, logs: logHistory });
+      return res.json({ ok: true, fired: true, state: getRussianRouletteState(session), log: log.text, logs: [log], players: serializePlayers([winner]) });
     }
 
     session.round += 1;
@@ -2169,7 +2205,7 @@ app.post('/russian-roulette/trigger', async (req, res) => {
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, fired: false, state: getRussianRouletteState(session), log: log.text, logs: logHistory });
+    res.json({ ok: true, fired: false, state: getRussianRouletteState(session), log: log.text, logs: [log], players: serializePlayers(players) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '러시안룰렛 진행 중 오류가 발생했습니다.' });
@@ -2245,15 +2281,16 @@ app.post('/game', async (req, res) => {
       }
     }
 
-    const log = await addLog(gameType, makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win));
-
-    await savePlayers([player]);
+    const [log] = await Promise.all([
+      addLog(gameType, makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win)),
+      savePlayers([player])
+    ]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, win, log: log.text, logs: logHistory, result });
+    res.json({ ok: true, win, log: log.text, logs: [log], result, players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
     res.status(err.status || 500).json({ error: err.message || '게임 처리 중 오류가 발생했습니다.' });
@@ -2292,15 +2329,16 @@ app.post('/exchange', async (req, res) => {
     from[color] -= moveAmount;
     to[color] += moveAmount;
 
-    const log = await addLog('exchange', makeTransferLog(from, to, color, moveAmount));
-
-    await savePlayers([from, to]);
+    const [log] = await Promise.all([
+      addLog('exchange', makeTransferLog(from, to, color, moveAmount)),
+      savePlayers([from, to])
+    ]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, log: log.text, logs: logHistory });
+    res.json({ ok: true, log: log.text, logs: [log], players: serializePlayers([from, to]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '칩 이동 중 오류가 발생했습니다.' });
@@ -2345,15 +2383,16 @@ app.post('/convert', async (req, res) => {
     player[fromColor] -= convertAmount;
     player[toColor] += result;
 
-    const log = await addLog('convert', makeConvertLog(player, fromColor, toColor, convertAmount, result));
-
-    await savePlayers([player]);
+    const [log] = await Promise.all([
+      addLog('convert', makeConvertLog(player, fromColor, toColor, convertAmount, result)),
+      savePlayers([player])
+    ]);
 
     emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, result, log: log.text, logs: logHistory });
+    res.json({ ok: true, result, log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '환전 처리 중 오류가 발생했습니다.' });

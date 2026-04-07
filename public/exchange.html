@@ -161,7 +161,6 @@
       }
 
       alert('칩 이동 완료');
-      await loadPlayers();
     }
 
     async function convertChip() {
@@ -184,7 +183,6 @@
       }
 
       alert(`환전 완료: ${data.result}개 지급`);
-      await loadPlayers();
     }
 
     async function setRates() {
@@ -208,7 +206,13 @@
       }
 
       alert('비율 적용 완료');
-      await loadRates();
+      if (data.rates) {
+        document.getElementById('rateRed').value = data.rates.red;
+        document.getElementById('rateBlue').value = data.rates.blue;
+        document.getElementById('rateGreen').value = data.rates.green;
+        document.getElementById('rateYellow').value = data.rates.yellow;
+        document.getElementById('rateWhite').value = data.rates.white;
+      }
     }
 
     loadPlayers();

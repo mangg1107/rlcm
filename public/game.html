@@ -178,6 +178,7 @@
 
   <script>
     let players = [];
+    let allLogs = [];
     let activeBlackjackPlayerId = null;
     let activeBaccaratPlayerId = null;
     let activeRussianRouletteSessionId = null;
@@ -203,6 +204,27 @@
     async function loadPlayers() {
       const res = await fetch('/api/players');
       players = await res.json();
+
+      renderPlayerOptions();
+      updateRussianRoulettePlayers();
+      updateBalanceHint();
+    }
+
+    function mergePlayers(nextPlayers) {
+      if (!Array.isArray(nextPlayers) || !nextPlayers.length) {
+        updateBalanceHint();
+        return;
+      }
+
+      nextPlayers.forEach((nextPlayer) => {
+        const existingPlayer = getPlayerById(nextPlayer.id);
+
+        if (existingPlayer) {
+          Object.assign(existingPlayer, nextPlayer);
+        } else {
+          players.push(nextPlayer);
+        }
+      });
 
       renderPlayerOptions();
       updateRussianRoulettePlayers();
@@ -558,7 +580,7 @@
       }
 
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
       alert(gameType === 'roulette'
         ? `Roulette result: ${data.result} / ${data.win ? 'win' : 'loss'}`
         : gameType === 'highlow'
@@ -613,7 +635,7 @@
       activeRussianRouletteSessionId = data.state.id;
       renderRussianRouletteState(data.state);
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
     }
 
     async function pullRussianRouletteTrigger() {
@@ -632,7 +654,7 @@
 
       renderRussianRouletteState(data.state);
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
 
       if (data.state.done) {
         activeRussianRouletteSessionId = null;
@@ -681,7 +703,7 @@ Result: ${state.lastAction}`;
       activeBaccaratPlayerId = data.state.done ? null : payload.playerId;
       renderBaccaratState(data.state);
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
 
       if (data.state.done) {
         alert(`Baccarat ${data.state.outcome}`);
@@ -705,7 +727,7 @@ Result: ${state.lastAction}`;
 
       renderBaccaratState(data.state);
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
 
       if (data.state.done) {
         activeBaccaratPlayerId = null;
@@ -750,7 +772,7 @@ Status: ${state.done ? `${state.outcome}${state.push ? ' push' : state.win ? ' w
       activeBlackjackPlayerId = payload.playerId;
       renderBlackjackState(data.state);
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
     }
 
     async function blackjackAction(action) {
@@ -770,7 +792,7 @@ Status: ${state.done ? `${state.outcome}${state.push ? ' push' : state.win ? ' w
 
       renderBlackjackState(data.state);
       renderLogs(data.logs);
-      await loadPlayers();
+      mergePlayers(data.players);
 
       if (data.state.done) {
         activeBlackjackPlayerId = null;
@@ -801,7 +823,28 @@ Status: ${state.done ? state.result : 'in progress'}`;
       }
     }
 
-    function renderLogs(logs) {
+    function mergeLogs(logs) {
+      if (Array.isArray(logs)) {
+        const seen = new Set();
+        allLogs = [...logs, ...allLogs]
+          .filter((log) => {
+            const key = log.id || `${log.type}-${log.createdAt}-${log.text}`;
+
+            if (seen.has(key)) {
+              return false;
+            }
+
+            seen.add(key);
+            return true;
+          })
+          .slice(0, 100);
+      }
+
+      return allLogs;
+    }
+
+    function renderLogs(nextLogs) {
+      const logs = mergeLogs(nextLogs);
       logList.innerHTML = '';
 
       if (!logs.length) {
