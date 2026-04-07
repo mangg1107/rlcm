@@ -101,7 +101,11 @@
     }
 
     async function logBalance(playerId) {
-      const res = await fetch(`/api/players/${playerId}/balance-log`, { method: 'POST' });
+      const res = await fetch('/api/balance-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId })
+      });
       const data = await readResponse(res);
 
       if (!res.ok) {

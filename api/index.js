@@ -1045,11 +1045,11 @@ app.post('/logs/test', async (req, res) => {
   }
 });
 
-app.post('/players/:playerId/balance-log', async (req, res) => {
+async function handleBalanceLog(req, res, playerId) {
   try {
     await loadSheet();
 
-    const player = getPlayerById(req.params.playerId);
+    const player = getPlayerById(playerId);
 
     if (!player) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
@@ -1066,6 +1066,14 @@ app.post('/players/:playerId/balance-log', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: '잔고 로그를 생성하지 못했습니다.', detail: getErrorDetail(err) });
   }
+}
+
+app.post('/balance-log', async (req, res) => {
+  return handleBalanceLog(req, res, req.body.playerId);
+});
+
+app.post('/players/:playerId/balance-log', async (req, res) => {
+  return handleBalanceLog(req, res, req.params.playerId);
 });
 
 // 환율 조회
