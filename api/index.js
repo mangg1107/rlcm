@@ -29,6 +29,7 @@ let logHistory = [];
 let logSheetReady = false;
 let blackjackSessionSheetReady = false;
 let baccaratSessionSheetReady = false;
+let russianRouletteSessionSheetReady = false;
 let blackjackSessions = new Map();
 let baccaratSessions = new Map();
 let russianRouletteSessions = new Map();
@@ -150,6 +151,26 @@ const BACCARAT_SESSION_HEADER = [
   'playerAction',
   'done',
   'outcome',
+  'updatedAt'
+];
+const RUSSIAN_ROULETTE_SESSION_SHEET_NAME = '러시안룰렛세션';
+const RUSSIAN_ROULETTE_SESSION_SHEET_REF = `'${RUSSIAN_ROULETTE_SESSION_SHEET_NAME}'`;
+const RUSSIAN_ROULETTE_SESSION_HEADER_RANGE = `${RUSSIAN_ROULETTE_SESSION_SHEET_REF}!A1:M1`;
+const RUSSIAN_ROULETTE_SESSION_RANGE = `${RUSSIAN_ROULETTE_SESSION_SHEET_REF}!A:M`;
+const RUSSIAN_ROULETTE_SESSION_ID_RANGE = `${RUSSIAN_ROULETTE_SESSION_SHEET_REF}!A:A`;
+const RUSSIAN_ROULETTE_SESSION_HEADER = [
+  'id',
+  'participantIds',
+  'activeIds',
+  'eliminated',
+  'color',
+  'bet',
+  'pot',
+  'round',
+  'done',
+  'winnerId',
+  'result',
+  'lastAction',
   'updatedAt'
 ];
 
@@ -423,6 +444,21 @@ function parseJsonArray(value) {
   }
 }
 
+function parseIdArray(value) {
+  return parseJsonArray(value)
+    .map(Number)
+    .filter((id) => Number.isFinite(id));
+}
+
+function parseEliminatedPlayers(value) {
+  return parseJsonArray(value)
+    .map((entry) => ({
+      id: Number(entry?.id),
+      round: Number(entry?.round)
+    }))
+    .filter((entry) => Number.isFinite(entry.id) && Number.isFinite(entry.round));
+}
+
 function sheetRowRange(sheetRef, endColumn, rowNumber) {
   return `${sheetRef}!A${rowNumber}:${endColumn}${rowNumber}`;
 }
@@ -442,6 +478,28 @@ async function findRowNumberByFirstColumn(idRange, id) {
 
   for (let index = 0; index < rows.length; index += 1) {
     if (Number(rows[index]?.[0]) === targetId) {
+      return index + 1;
+    }
+  }
+
+  return null;
+}
+
+async function findRowNumberByFirstColumnText(idRange, id) {
+  const targetId = String(id || '');
+
+  if (!targetId) {
+    return null;
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: idRange
+  });
+  const rows = res.data.values || [];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    if (String(rows[index]?.[0] || '') === targetId) {
       return index + 1;
     }
   }
@@ -720,6 +778,144 @@ async function deleteBaccaratSession(playerId) {
   baccaratSessions.delete(String(playerId));
 }
 
+async function ensureRussianRouletteSessionSheetHeader() {
+  if (russianRouletteSessionSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === RUSSIAN_ROULETTE_SESSION_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: RUSSIAN_ROULETTE_SESSION_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: RUSSIAN_ROULETTE_SESSION_HEADER_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = RUSSIAN_ROULETTE_SESSION_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: RUSSIAN_ROULETTE_SESSION_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [RUSSIAN_ROULETTE_SESSION_HEADER] }
+    });
+  }
+
+  russianRouletteSessionSheetReady = true;
+}
+
+function parseRussianRouletteSessionRow(row) {
+  const winnerId = Number(row[9]);
+
+  return {
+    id: row[0] || '',
+    participantIds: parseIdArray(row[1]),
+    activeIds: parseIdArray(row[2]),
+    eliminated: parseEliminatedPlayers(row[3]),
+    color: row[4] || '',
+    bet: toChipAmount(row[5]),
+    pot: toChipAmount(row[6]),
+    round: toChipAmount(row[7]),
+    done: row[8] === 'true',
+    winnerId: Number.isFinite(winnerId) ? winnerId : null,
+    result: row[10] || '',
+    lastAction: row[11] || ''
+  };
+}
+
+function russianRouletteSessionToRow(session) {
+  return [
+    session.id,
+    JSON.stringify(session.participantIds || []),
+    JSON.stringify(session.activeIds || []),
+    JSON.stringify(session.eliminated || []),
+    session.color,
+    session.bet,
+    session.pot,
+    session.round,
+    session.done ? 'true' : 'false',
+    session.winnerId || '',
+    session.result || '',
+    session.lastAction || '',
+    new Date().toISOString()
+  ];
+}
+
+async function getRussianRouletteSessionRowNumber(sessionId) {
+  await ensureRussianRouletteSessionSheetHeader();
+  return findRowNumberByFirstColumnText(RUSSIAN_ROULETTE_SESSION_ID_RANGE, sessionId);
+}
+
+async function getRussianRouletteSession(sessionId) {
+  const rowNumber = await getRussianRouletteSessionRowNumber(sessionId);
+
+  if (!rowNumber) {
+    russianRouletteSessions.delete(String(sessionId));
+    return null;
+  }
+
+  const row = await readSingleRow(sheetRowRange(RUSSIAN_ROULETTE_SESSION_SHEET_REF, 'M', rowNumber));
+  const session = parseRussianRouletteSessionRow(row);
+
+  if (!session.id) {
+    russianRouletteSessions.delete(String(sessionId));
+    return null;
+  }
+
+  withSessionRowNumber(session, rowNumber);
+  russianRouletteSessions.set(String(session.id), session);
+  return session;
+}
+
+async function saveRussianRouletteSession(session) {
+  let rowNumber = session._rowNumber || await getRussianRouletteSessionRowNumber(session.id);
+  const row = russianRouletteSessionToRow(session);
+
+  if (rowNumber) {
+    await updateSingleRow(sheetRowRange(RUSSIAN_ROULETTE_SESSION_SHEET_REF, 'M', rowNumber), row);
+  } else {
+    const updatedRange = await appendSingleRow(RUSSIAN_ROULETTE_SESSION_RANGE, row);
+    rowNumber = getRowNumberFromRange(updatedRange);
+  }
+
+  if (rowNumber) {
+    withSessionRowNumber(session, rowNumber);
+  }
+  russianRouletteSessions.set(String(session.id), session);
+}
+
+async function deleteRussianRouletteSession(sessionId) {
+  const cachedSession = russianRouletteSessions.get(String(sessionId));
+  const rowNumber = cachedSession?._rowNumber || await getRussianRouletteSessionRowNumber(sessionId);
+
+  if (rowNumber) {
+    await clearSingleRow(sheetRowRange(RUSSIAN_ROULETTE_SESSION_SHEET_REF, 'M', rowNumber));
+  }
+
+  russianRouletteSessions.delete(String(sessionId));
+}
+
 function parseLogRow(row) {
   return {
     id: Number(row[0]) || Date.parse(row[4]) || 0,
@@ -976,16 +1172,11 @@ function makeBlackjackPublicLog(player, session, action, resultText) {
   }
 
   const dealerValue = session.done ? ` (${state.dealerValue})` : '';
-  const dealerDraws = session.done && state.dealerDraws.length
-    ? `\n딜러 추가 카드: ${state.dealerDraws.join(', ')}`
-    : '';
 
   return `플레이어: ${player.name}
 베팅: ${session.color} ${session.bet}
-행동: ${action}
 플레이어 패: ${state.playerCards.join(', ')} (${state.playerValue})
 딜러 패: ${getPublicDealerCards(session)}${dealerValue}
-이번 결과: ${state.lastDraw || '-'}${dealerDraws}
 결과: ${resultText}`;
 }
 
@@ -1441,8 +1632,6 @@ BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
 행동: ${action}
 PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
 BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
-플레이어 추가 카드: ${state.playerThirdCard || '-'}
-뱅커 추가 카드: ${state.bankerThirdCard || '-'}
 결과: ${state.outcome}
 판정: ${resultText}`;
 }
@@ -2184,13 +2373,13 @@ app.post('/russian-roulette/start', async (req, res) => {
       lastAction: `게임 시작. 참가자 ${uniqueParticipantIds.length}명, 라운드마다 생존자 중 1명 탈락.`
     };
 
-    russianRouletteSessions.set(session.id, session);
     const [log] = await Promise.all([
       addLog(
         'russianroulette',
         makeRussianRouletteLog(session),
         makeRussianRoulettePublicLog(session)
       ),
+      saveRussianRouletteSession(session),
       savePlayers(participants)
     ]);
 
@@ -2208,14 +2397,14 @@ app.post('/russian-roulette/start', async (req, res) => {
 app.post('/russian-roulette/trigger', async (req, res) => {
   try {
     const { sessionId } = req.body;
-    const session = russianRouletteSessions.get(String(sessionId));
+    const session = await getRussianRouletteSession(sessionId);
 
     if (!session) {
       return res.status(400).json({ error: '진행 중인 러시안룰렛이 없습니다.' });
     }
 
     if (session.done || session.activeIds.length <= 1) {
-      russianRouletteSessions.delete(String(sessionId));
+      await deleteRussianRouletteSession(sessionId);
       return res.status(400).json({ error: '이미 종료된 러시안룰렛입니다.' });
     }
 
@@ -2230,7 +2419,7 @@ app.post('/russian-roulette/trigger', async (req, res) => {
     if (session.activeIds.length === 1) {
       const winner = getPlayerById(session.activeIds[0]);
       if (!winner) {
-        russianRouletteSessions.delete(String(sessionId));
+        await deleteRussianRouletteSession(sessionId);
         return res.status(404).json({ error: '승자를 찾을 수 없어 세션을 종료했습니다.' });
       }
 
@@ -2240,15 +2429,14 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       session.result = `${winner.name} 승리`;
       session.lastAction += `. 최종 승자: ${winner.name}. 팟 ${session.color} ${session.pot} 지급.`;
 
-      russianRouletteSessions.delete(String(sessionId));
-
       const [log] = await Promise.all([
         addLog(
           'russianroulette',
           makeRussianRouletteLog(session),
           makeRussianRoulettePublicLog(session)
         ),
-        savePlayers([winner])
+        savePlayers([winner]),
+        deleteRussianRouletteSession(session.id)
       ]);
 
       emitRealtime('update', players);
@@ -2260,11 +2448,14 @@ app.post('/russian-roulette/trigger', async (req, res) => {
 
     session.round += 1;
 
-    const log = await addLog(
-      'russianroulette',
-      makeRussianRouletteLog(session),
-      makeRussianRoulettePublicLog(session)
-    );
+    const [log] = await Promise.all([
+      addLog(
+        'russianroulette',
+        makeRussianRouletteLog(session),
+        makeRussianRoulettePublicLog(session)
+      ),
+      saveRussianRouletteSession(session)
+    ]);
 
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
