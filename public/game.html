@@ -189,6 +189,13 @@
       yellow: 'Yellow',
       white: 'White'
     };
+    const GAME_LIMIT_LABELS = {
+      roulette: 'Roulette',
+      highlow: 'High Low',
+      baccarat: 'Baccarat',
+      blackjack: 'Blackjack',
+      redblack: 'Red Black'
+    };
 
     const logList = document.getElementById('logList');
     const blackjackStateBox = document.getElementById('blackjackState');
@@ -246,7 +253,8 @@
 
     function formatPlayerOption(player) {
       const color = document.getElementById('color').value;
-      return `${player.name} (#${player.id}) - ${CHIP_LABELS[color]}:${getChipBalance(player, color)}`;
+      const gameType = document.getElementById('gameType').value;
+      return `${player.name} (#${player.id}) - ${CHIP_LABELS[color]}:${getChipBalance(player, color)} - Plays:${formatGameLimit(getPlayerGameLimit(player, gameType))}`;
     }
 
     function getChipAmount(value) {
@@ -261,9 +269,23 @@
       return Math.floor(Number(player?.[color] || 0));
     }
 
+    function getPlayerGameLimit(player, gameType) {
+      return player?.gameLimits?.[gameType];
+    }
+
+    function formatGameLimit(value) {
+      return Number.isFinite(Number(value)) ? Number(value) : 'no limit';
+    }
+
+    function hasGameLimitAvailable(player, gameType) {
+      const limit = getPlayerGameLimit(player, gameType);
+      return !Number.isFinite(Number(limit)) || Number(limit) > 0;
+    }
+
     function validatePlayerBet(playerId, color, amount, label = '플레이어') {
       const player = getPlayerById(playerId);
       const bet = getChipAmount(amount);
+      const gameType = document.getElementById('gameType').value;
 
       if (!Number.isFinite(bet) || bet <= 0) {
         alert('베팅 수량이 올바르지 않습니다.');
@@ -279,6 +301,11 @@
 
       if (balance < bet) {
         alert(`${player.name} 잔고 부족: ${CHIP_LABELS[color]} ${balance}개 보유 / 베팅 ${bet}개`);
+        return false;
+      }
+
+      if (!hasGameLimitAvailable(player, gameType)) {
+        alert(`${player.name} has no ${GAME_LIMIT_LABELS[gameType] || gameType} plays left.`);
         return false;
       }
 
@@ -343,8 +370,9 @@
       }
 
       const balance = getChipBalance(player, color);
+      const limit = formatGameLimit(getPlayerGameLimit(player, gameType));
       const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '잔고 부족' : '플레이 가능';
-      balanceHint.textContent = `실시간 잔고: ${player.name} ${CHIP_LABELS[color]} ${balance}개 / 베팅 ${Number.isFinite(bet) ? bet : '-'}개 (${status})`;
+      balanceHint.textContent = `실시간 잔고: ${player.name} ${CHIP_LABELS[color]} ${balance}개 / 베팅 ${Number.isFinite(bet) ? bet : '-'}개 (${status}) / plays ${limit}`;
     }
 
     function updateRussianRoulettePlayers() {

@@ -17,20 +17,61 @@
 
   <h1>Dashboard</h1>
 
+  <h2>ABC + 칩 가치 확인</h2>
   <div class="table-wrapper">
     <table>
       <thead>
         <tr>
           <th>ID</th>
           <th>Name</th>
+          <th>Team</th>
           <th>Red</th>
           <th>Blue</th>
           <th>Green</th>
           <th>Yellow</th>
           <th>White</th>
+          <th>Total Value</th>
         </tr>
       </thead>
-      <tbody id="tb"></tbody>
+      <tbody id="chipTb"></tbody>
+    </table>
+  </div>
+
+  <h2>ABC + 리미트 확인</h2>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Team</th>
+          <th>Roulette</th>
+          <th>High Low</th>
+          <th>Baccarat</th>
+          <th>Blackjack</th>
+          <th>Red Black</th>
+        </tr>
+      </thead>
+      <tbody id="limitTb"></tbody>
+    </table>
+  </div>
+
+  <h2>Team Totals</h2>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Team</th>
+          <th>Players</th>
+          <th>Red</th>
+          <th>Blue</th>
+          <th>Green</th>
+          <th>Yellow</th>
+          <th>White</th>
+          <th>Total Value</th>
+        </tr>
+      </thead>
+      <tbody id="teamTb"></tbody>
     </table>
   </div>
 
@@ -57,35 +98,96 @@
   <div id="logList" class="log-list"></div>
 
   <script>
-    const tb = document.getElementById('tb');
+    const chipTb = document.getElementById('chipTb');
+    const limitTb = document.getElementById('limitTb');
+    const teamTb = document.getElementById('teamTb');
     const logBox = document.getElementById('log');
     const logList = document.getElementById('logList');
     const logTypeFilter = document.getElementById('logTypeFilter');
     const logCount = document.getElementById('logCount');
     let latestPublicLogText = '';
     let allLogs = [];
+    const GAME_LIMIT_LABELS = {
+      roulette: 'Roulette',
+      highlow: 'High Low',
+      baccarat: 'Baccarat',
+      blackjack: 'Blackjack',
+      redblack: 'Red Black'
+    };
 
-    function render(players) {
-      tb.innerHTML = '';
+    function formatLimit(value) {
+      return Number.isFinite(Number(value)) ? Number(value) : 'no limit';
+    }
+
+    function renderChipValues(players) {
+      chipTb.innerHTML = '';
       players.forEach((p) => {
-        tb.innerHTML += `
+        chipTb.innerHTML += `
           <tr>
             <td><button class="id-button" type="button" onclick="logBalance(${p.id})">${p.id}</button></td>
             <td>${p.name}</td>
+            <td>${p.team || '-'}</td>
             <td style="color:red">${p.red || 0}</td>
             <td style="color:blue">${p.blue || 0}</td>
             <td style="color:green">${p.green || 0}</td>
             <td style="color:#c7a000">${p.yellow || 0}</td>
             <td>${p.white || 0}</td>
+            <td>${p.totalValue || 0}</td>
+          </tr>
+        `;
+      });
+    }
+
+    function renderLimits(players) {
+      limitTb.innerHTML = '';
+      players.forEach((p) => {
+        const limits = p.gameLimits || {};
+        limitTb.innerHTML += `
+          <tr>
+            <td>${p.id}</td>
+            <td>${p.name}</td>
+            <td>${p.team || '-'}</td>
+            <td>${formatLimit(limits.roulette)}</td>
+            <td>${formatLimit(limits.highlow)}</td>
+            <td>${formatLimit(limits.baccarat)}</td>
+            <td>${formatLimit(limits.blackjack)}</td>
+            <td>${formatLimit(limits.redblack)}</td>
+          </tr>
+        `;
+      });
+    }
+
+    function renderTeams(teams) {
+      teamTb.innerHTML = '';
+
+      if (!teams.length) {
+        teamTb.innerHTML = '<tr><td colspan="8">No teams yet.</td></tr>';
+        return;
+      }
+
+      teams.forEach((team) => {
+        const chips = team.chipTotals || {};
+        teamTb.innerHTML += `
+          <tr>
+            <td>${team.team || '-'}</td>
+            <td>${team.playerCount || 0}</td>
+            <td style="color:red">${chips.red || 0}</td>
+            <td style="color:blue">${chips.blue || 0}</td>
+            <td style="color:green">${chips.green || 0}</td>
+            <td style="color:#c7a000">${chips.yellow || 0}</td>
+            <td>${chips.white || 0}</td>
+            <td>${team.totalValue || 0}</td>
           </tr>
         `;
       });
     }
 
     async function reloadPlayers() {
-      const res = await fetch('/api/players');
-      const players = await res.json();
-      render(players);
+      const teamRes = await fetch('/api/teams');
+      const teamData = await teamRes.json();
+      renderChipValues(teamData.players || []);
+      renderLimits(teamData.players || []);
+      renderTeams(teamData.teams || []);
 
       const logsRes = await fetch('/api/logs?limit=100');
       allLogs = await logsRes.json();

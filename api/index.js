@@ -27,6 +27,7 @@ let players = [];
 let lastLogText = '';
 let logHistory = [];
 let logSheetReady = false;
+let rateSheetReady = false;
 let blackjackSessionSheetReady = false;
 let baccaratSessionSheetReady = false;
 let russianRouletteSessionSheetReady = false;
@@ -41,8 +42,17 @@ const CHIP_LABELS = {
   yellow: 'Yellow',
   white: 'White'
 };
+const GAME_LIMITS = [
+  { type: 'roulette', key: 'rouletteLimit', label: 'Roulette' },
+  { type: 'highlow', key: 'highlowLimit', label: 'High Low' },
+  { type: 'baccarat', key: 'baccaratLimit', label: 'Baccarat' },
+  { type: 'blackjack', key: 'blackjackLimit', label: 'Blackjack' },
+  { type: 'redblack', key: 'redblackLimit', label: 'Red Black' }
+];
+const GAME_LIMIT_BY_TYPE = new Map(GAME_LIMITS.map((config) => [config.type, config]));
+const DEFAULT_RATES = { red: 1, blue: 3, green: 5, yellow: 10, white: 15 };
 
-let rates = { red: 1, blue: 3, green: 5, yellow: 10, white: 15 };
+let rates = { ...DEFAULT_RATES };
 
 // =========================
 // 🔑 Google Sheets 설정
@@ -102,10 +112,19 @@ const SPREADSHEET_ID = '1d9s84o9LrVdncnWCNC85Vjnml4uyjp-rkMgqXkfesls';
 
 const PLAYER_SHEET_NAME = '플레이어';
 const PLAYER_SHEET_REF = `'${PLAYER_SHEET_NAME}'`;
-const PLAYER_RANGE = `${PLAYER_SHEET_REF}!A:G`;
+const PLAYER_END_COLUMN = 'M';
+const PLAYER_RANGE = `${PLAYER_SHEET_REF}!A:${PLAYER_END_COLUMN}`;
+const PLAYER_MIGRATION_RANGE = `${PLAYER_SHEET_REF}!A:N`;
 const PLAYER_WRITE_RANGE = `${PLAYER_SHEET_REF}!A1`;
 const PLAYER_ID_RANGE = `${PLAYER_SHEET_REF}!A:A`;
-const PLAYER_HEADER = ['id', 'name', ...COLORS];
+const PLAYER_HEADER_RANGE = `${PLAYER_SHEET_REF}!A1:${PLAYER_END_COLUMN}1`;
+const PLAYER_HEADER = ['id', 'name', 'team', ...COLORS, ...GAME_LIMITS.map((game) => game.key)];
+const RATE_SHEET_NAME = '칩가치';
+const RATE_SHEET_REF = `'${RATE_SHEET_NAME}'`;
+const RATE_HEADER_RANGE = `${RATE_SHEET_REF}!A1:B1`;
+const RATE_RANGE = `${RATE_SHEET_REF}!A:B`;
+const RATE_WRITE_RANGE = `${RATE_SHEET_REF}!A1`;
+const RATE_HEADER = ['color', 'value'];
 const LOG_SHEET_NAME = '로그';
 const LOG_SHEET_REF = `'${LOG_SHEET_NAME}'`;
 const LOG_HEADER_RANGE = `${LOG_SHEET_REF}!A1:E1`;
@@ -186,20 +205,76 @@ function withPlayerRowNumber(player, rowNumber) {
   return player;
 }
 
-function parsePlayerRow(row, rowNumber) {
+function normalizeHeaderCell(value) {
+  return String(value || '').trim();
+}
+
+function headerMatches(header, expectedHeader) {
+  return expectedHeader.every((name, index) => normalizeHeaderCell(header[index]) === name);
+}
+
+function getRowValueByHeader(row, header, name) {
+  const index = header.findIndex((cell) => normalizeHeaderCell(cell) === name);
+  return index >= 0 ? row[index] : undefined;
+}
+
+function parsePlayerRowByHeader(row, header, rowNumber) {
+  const normalizedHeader = header.map(normalizeHeaderCell);
+  const hasNamedHeader = ['id', 'name'].every((name) => normalizedHeader.includes(name));
+
+  if (hasNamedHeader) {
+    const limitValues = Object.fromEntries(
+      GAME_LIMITS.map((game) => [game.key, readGameLimitValue(getRowValueByHeader(row, header, game.key))])
+    );
+
+    return withPlayerRowNumber({
+      id: Number(getRowValueByHeader(row, header, 'id') || 0),
+      name: getRowValueByHeader(row, header, 'name') || '',
+      team: getRowValueByHeader(row, header, 'team') || '',
+      ...Object.fromEntries(COLORS.map((color) => [color, readChipValue(getRowValueByHeader(row, header, color))])),
+      ...limitValues
+    }, rowNumber);
+  }
+
   return withPlayerRowNumber({
     id: Number(row[0] || 0),
     name: row[1] || '',
+    team: '',
     red: readChipValue(row[2]),
     blue: readChipValue(row[3]),
     green: readChipValue(row[4]),
     yellow: readChipValue(row[5]),
-    white: readChipValue(row[6])
+    white: readChipValue(row[6]),
+    ...Object.fromEntries(GAME_LIMITS.map((game) => [game.key, null]))
+  }, rowNumber);
+}
+
+function parsePlayerRow(row, rowNumber) {
+  const limitValues = Object.fromEntries(
+    GAME_LIMITS.map((game, index) => [game.key, readGameLimitValue(row[8 + index])])
+  );
+
+  return withPlayerRowNumber({
+    id: Number(row[0] || 0),
+    name: row[1] || '',
+    team: row[2] || '',
+    red: readChipValue(row[3]),
+    blue: readChipValue(row[4]),
+    green: readChipValue(row[5]),
+    yellow: readChipValue(row[6]),
+    white: readChipValue(row[7]),
+    ...limitValues
   }, rowNumber);
 }
 
 function playerToRow(player) {
-  return [player.id, player.name, ...COLORS.map((color) => player[color] || 0)];
+  return [
+    player.id,
+    player.name,
+    player.team || '',
+    ...COLORS.map((color) => player[color] || 0),
+    ...GAME_LIMITS.map((game) => formatGameLimitValue(player[game.key]))
+  ];
 }
 
 function uniquePlayerIds(playerIds) {
@@ -207,7 +282,68 @@ function uniquePlayerIds(playerIds) {
     .filter((id) => Number.isFinite(id));
 }
 
+async function ensurePlayerSheetHeader() {
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === PLAYER_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: PLAYER_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: PLAYER_MIGRATION_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = headerMatches(header, PLAYER_HEADER);
+
+  if (!hasHeader) {
+    const migratedRows = [
+      PLAYER_HEADER,
+      ...values
+        .slice(1)
+        .filter((row) => row.some((cell) => normalizeHeaderCell(cell)))
+        .map((row, index) => playerToRow(parsePlayerRowByHeader(row, header, index + 2)))
+    ];
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: PLAYER_WRITE_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: migratedRows }
+    });
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${PLAYER_SHEET_REF}!N:N`
+    });
+  } else if (normalizeHeaderCell(header[13]) === 'russianrouletteLimit') {
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${PLAYER_SHEET_REF}!N:N`
+    });
+  }
+}
+
 async function loadSheet() {
+  await ensurePlayerSheetHeader();
+
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: PLAYER_RANGE
@@ -227,6 +363,8 @@ async function loadSheet() {
 // 📤 서버 → 시트
 // =========================
 async function saveSheet() {
+  await ensurePlayerSheetHeader();
+
   const values = [
     PLAYER_HEADER,
     ...players.map(playerToRow)
@@ -241,6 +379,8 @@ async function saveSheet() {
 }
 
 async function getPlayerRowNumbers(playerIds) {
+  await ensurePlayerSheetHeader();
+
   const ids = uniquePlayerIds(playerIds);
   const idSet = new Set(ids);
   const rowNumbers = new Map();
@@ -285,7 +425,7 @@ async function loadPlayersByIds(playerIds) {
 
   const res = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID,
-    ranges: targets.map((target) => `${PLAYER_SHEET_REF}!A${target.rowNumber}:G${target.rowNumber}`)
+    ranges: targets.map((target) => sheetRowRange(PLAYER_SHEET_REF, PLAYER_END_COLUMN, target.rowNumber))
   });
 
   players = (res.data.valueRanges || [])
@@ -327,7 +467,7 @@ async function savePlayers(changedPlayers) {
     }
 
     return {
-      range: `${PLAYER_SHEET_REF}!A${rowNumber}:G${rowNumber}`,
+      range: sheetRowRange(PLAYER_SHEET_REF, PLAYER_END_COLUMN, rowNumber),
       values: [playerToRow(player)]
     };
   });
@@ -386,6 +526,104 @@ async function ensureLogSheetHeader() {
   }
 
   logSheetReady = true;
+}
+
+async function ensureRateSheetHeader() {
+  if (rateSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === RATE_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: RATE_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: RATE_HEADER_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = RATE_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: RATE_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [RATE_HEADER] }
+    });
+  }
+
+  rateSheetReady = true;
+}
+
+async function loadRates() {
+  await ensureRateSheetHeader();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: RATE_RANGE
+  });
+  const rows = res.data.values || [];
+
+  if (rows.length <= 1) {
+    await saveRates(DEFAULT_RATES);
+    return rates;
+  }
+
+  const nextRates = { ...DEFAULT_RATES };
+
+  rows.slice(1).forEach((row) => {
+    const color = String(row[0] || '').trim().toLowerCase();
+    const value = Number(row[1]);
+
+    if (COLORS.includes(color) && Number.isFinite(value) && value > 0) {
+      nextRates[color] = value;
+    }
+  });
+
+  rates = nextRates;
+  return rates;
+}
+
+async function saveRates(nextRates) {
+  await ensureRateSheetHeader();
+
+  rates = Object.fromEntries(
+    COLORS.map((color) => [color, Number(nextRates[color])])
+  );
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: RATE_WRITE_RANGE,
+    valueInputOption: 'RAW',
+    requestBody: {
+      values: [
+        RATE_HEADER,
+        ...COLORS.map((color) => [color, rates[color]])
+      ]
+    }
+  });
+
+  return rates;
 }
 
 async function ensureBlackjackSessionSheetHeader() {
@@ -1047,8 +1285,109 @@ function readChipValue(value) {
   return Number.isFinite(Number(value)) ? toChipAmount(value) : 0;
 }
 
+function readGameLimitValue(value) {
+  const text = String(value ?? '').trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const limit = toChipAmount(text);
+  return Number.isFinite(limit) ? Math.max(0, limit) : null;
+}
+
+function formatGameLimitValue(value) {
+  return Number.isFinite(Number(value)) ? Math.max(0, toChipAmount(value)) : '';
+}
+
 function getPlayerById(playerId) {
   return players.find((p) => p.id === Number(playerId));
+}
+
+function getPlayerTeam(player) {
+  const team = String(player?.team || '').trim();
+  return team || '팀 없음';
+}
+
+function getPlayerChipValue(player, rateMap = rates) {
+  return COLORS.reduce((total, color) => total + ((player?.[color] || 0) * (rateMap[color] || 0)), 0);
+}
+
+function getGameLimitConfig(gameType) {
+  return GAME_LIMIT_BY_TYPE.get(String(gameType || '').toLowerCase()) || null;
+}
+
+function getGameLimitValue(player, gameType) {
+  const config = getGameLimitConfig(gameType);
+  return config ? player?.[config.key] : null;
+}
+
+function createHttpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function assertGameLimitAvailable(player, gameType) {
+  const config = getGameLimitConfig(gameType);
+
+  if (!config) {
+    return;
+  }
+
+  const limit = getGameLimitValue(player, gameType);
+
+  if (Number.isFinite(limit) && limit <= 0) {
+    throw createHttpError(400, `${player.name}의 ${config.label} 플레이 가능 횟수가 없습니다.`);
+  }
+}
+
+function consumeGameLimit(player, gameType) {
+  const config = getGameLimitConfig(gameType);
+
+  if (!config) {
+    return;
+  }
+
+  const limit = getGameLimitValue(player, gameType);
+
+  if (Number.isFinite(limit)) {
+    player[config.key] = Math.max(0, limit - 1);
+  }
+}
+
+function getGameLimits(player) {
+  return Object.fromEntries(
+    GAME_LIMITS.map((game) => [game.type, player?.[game.key] ?? null])
+  );
+}
+
+function buildTeamTotals(playerList = players, rateMap = rates) {
+  const teams = new Map();
+
+  playerList.filter(Boolean).forEach((player) => {
+    const teamName = getPlayerTeam(player);
+
+    if (!teams.has(teamName)) {
+      teams.set(teamName, {
+        team: teamName,
+        playerCount: 0,
+        chipTotals: Object.fromEntries(COLORS.map((color) => [color, 0])),
+        totalValue: 0
+      });
+    }
+
+    const team = teams.get(teamName);
+    team.playerCount += 1;
+
+    COLORS.forEach((color) => {
+      const amount = player[color] || 0;
+      team.chipTotals[color] += amount;
+      team.totalValue += amount * (rateMap[color] || 0);
+    });
+  });
+
+  return [...teams.values()].sort((a, b) => b.totalValue - a.totalValue || a.team.localeCompare(b.team));
 }
 
 function serializePlayers(playerList = players) {
@@ -1057,7 +1396,11 @@ function serializePlayers(playerList = players) {
     .map((player) => ({
       id: player.id,
       name: player.name,
-      ...Object.fromEntries(COLORS.map((color) => [color, player[color] || 0]))
+      team: player.team || '',
+      ...Object.fromEntries(COLORS.map((color) => [color, player[color] || 0])),
+      totalValue: getPlayerChipValue(player),
+      gameLimits: getGameLimits(player),
+      ...Object.fromEntries(GAME_LIMITS.map((game) => [game.key, player[game.key] ?? null]))
     }));
 }
 
@@ -1716,11 +2059,14 @@ function makeRussianRoulettePublicLog(session) {
   const state = getRussianRouletteState(session);
   const active = state.activePlayers.map((p) => p.name).join(', ') || '-';
   const eliminated = state.eliminatedPlayers.map((p) => `${p.round}R ${p.name}`).join(', ') || '-';
+  const resultText = state.done
+    ? `${state.color} ${state.pot} 지급`
+    : state.lastAction;
 
   return `생존자: ${active}
 탈락자: ${eliminated}
 라운드: ${state.round}
-결과: ${state.lastAction}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}`;
+결과: ${resultText}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}`;
 }
 
 // =========================
@@ -1954,11 +2300,25 @@ app.get('/', (req, res) => {
 // 플레이어 조회
 app.get('/players', async (req, res) => {
   try {
-    await loadSheet();
-    res.json(players);
+    await Promise.all([loadSheet(), loadRates()]);
+    res.json(serializePlayers(players));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '플레이어 데이터를 불러오지 못했습니다.' });
+  }
+});
+
+app.get('/teams', async (req, res) => {
+  try {
+    await Promise.all([loadSheet(), loadRates()]);
+    res.json({
+      rates,
+      teams: buildTeamTotals(players),
+      players: serializePlayers(players)
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '팀 데이터를 불러오지 못했습니다.' });
   }
 });
 
@@ -2029,23 +2389,34 @@ app.post('/players/:playerId/balance-log', async (req, res) => {
 });
 
 // 환율 조회
-app.get('/rates', (req, res) => {
-  res.json(rates);
+app.get('/rates', async (req, res) => {
+  try {
+    const nextRates = await loadRates();
+    res.json(nextRates);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '칩 가치를 불러오지 못했습니다.' });
+  }
 });
 
 // 환율 설정
-app.post('/rates', (req, res) => {
-  const nextRates = Object.fromEntries(
-    COLORS.map((color) => [color, Number(req.body[color])])
-  );
+app.post('/rates', async (req, res) => {
+  try {
+    const nextRates = Object.fromEntries(
+      COLORS.map((color) => [color, Number(req.body[color])])
+    );
 
-  if (COLORS.some((color) => !Number.isFinite(nextRates[color]) || nextRates[color] <= 0)) {
-    return res.status(400).json({ error: '비율은 1 이상의 숫자여야 합니다.' });
+    if (COLORS.some((color) => !Number.isFinite(nextRates[color]) || nextRates[color] <= 0)) {
+      return res.status(400).json({ error: '비율은 1 이상의 숫자여야 합니다.' });
+    }
+
+    const savedRates = await saveRates(nextRates);
+
+    res.json({ ok: true, rates: savedRates });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '칩 가치를 저장하지 못했습니다.' });
   }
-
-  rates = nextRates;
-
-  res.json({ ok: true, rates });
 });
 
 app.post('/blackjack/start', async (req, res) => {
@@ -2071,6 +2442,9 @@ app.post('/blackjack/start', async (req, res) => {
       return res.status(400).json({ error: '보유 칩이 부족합니다.' });
     }
 
+    assertGameLimitAvailable(player, 'blackjack');
+    consumeGameLimit(player, 'blackjack');
+
     const deck = createBlackjackDeck();
     const playerCards = [drawBlackjackCard(deck), drawBlackjackCard(deck)];
     const dealerCards = [drawBlackjackCard(deck), drawBlackjackCard(deck)];
@@ -2091,16 +2465,18 @@ app.post('/blackjack/start', async (req, res) => {
         makeBlackjackProgressLog(player, session, 'start', '진행 중'),
         makeBlackjackPublicLog(player, session, 'start', '진행 중')
       ),
-      saveBlackjackSession(session)
+      saveBlackjackSession(session),
+      savePlayers([player])
     ]);
 
+    emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
     res.json({ ok: true, state: getBlackjackState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '블랙잭 시작 중 오류가 발생했습니다.' });
+    res.status(err.status || 500).json({ error: err.message || '블랙잭 시작 중 오류가 발생했습니다.' });
   }
 });
 
@@ -2212,6 +2588,9 @@ app.post('/baccarat/start', async (req, res) => {
       return res.status(400).json({ error: '보유 칩이 부족합니다.' });
     }
 
+    assertGameLimitAvailable(player, 'baccarat');
+    consumeGameLimit(player, 'baccarat');
+
     const shoe = createBaccaratShoe();
     const playerCards = [drawBaccaratCard(shoe), drawBaccaratCard(shoe)];
     const bankerCards = [drawBaccaratCard(shoe), drawBaccaratCard(shoe)];
@@ -2245,7 +2624,6 @@ app.post('/baccarat/start', async (req, res) => {
         savePlayers([player]),
         deleteBaccaratSession(player.id)
       ]);
-      emitRealtime('update', players);
     } else {
       [log] = await Promise.all([
         addLog(
@@ -2253,17 +2631,19 @@ app.post('/baccarat/start', async (req, res) => {
           makeBaccaratProgressLog(player, session, 'start', resultText),
           makeBaccaratPublicLog(player, session, 'start', resultText)
         ),
-        saveBaccaratSession(session)
+        saveBaccaratSession(session),
+        savePlayers([player])
       ]);
     }
 
+    emitRealtime('update', players);
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
     res.json({ ok: true, state: getBaccaratState(session), log: log.text, logs: [log], players: serializePlayers([player]) });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '바카라 시작 중 오류가 발생했습니다.' });
+    res.status(err.status || 500).json({ error: err.message || '바카라 시작 중 오류가 발생했습니다.' });
   }
 });
 
@@ -2390,7 +2770,7 @@ app.post('/russian-roulette/start', async (req, res) => {
     res.json({ ok: true, state: getRussianRouletteState(session), log: log.text, logs: [log], players: serializePlayers(participants) });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '러시안룰렛 시작 중 오류가 발생했습니다.' });
+    res.status(err.status || 500).json({ error: err.message || '러시안룰렛 시작 중 오류가 발생했습니다.' });
   }
 });
 
@@ -2496,6 +2876,8 @@ app.post('/game', async (req, res) => {
       return res.status(400).json({ error: '보유 칩이 부족합니다.' });
     }
 
+    assertGameLimitAvailable(player, gameType);
+
     let win;
     let logMultiplier = mul;
     let logExtra = extra;
@@ -2535,6 +2917,8 @@ app.post('/game', async (req, res) => {
         player[color] -= bet;
       }
     }
+
+    consumeGameLimit(player, gameType);
 
     const [log] = await Promise.all([
       addLog(
@@ -2636,6 +3020,8 @@ app.post('/convert', async (req, res) => {
       return res.status(400).json({ error: '보유 칩이 부족합니다.' });
     }
 
+    await loadRates();
+
     const totalValue = convertAmount * rates[fromColor];
     const result = Math.floor(totalValue / rates[toColor]);
 
@@ -2676,7 +3062,7 @@ app.post('/convert', async (req, res) => {
     });
   }
 
-  return { app, loadSheet };
+  return { app, loadSheet, loadRates };
 }
 
 const { app } = createApiApp();

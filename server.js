@@ -3,13 +3,13 @@ const path = require('path');
 const { createApiApp } = require('./api');
 
 const app = express();
-const { app: apiApp, loadSheet } = createApiApp();
+const { app: apiApp, loadSheet, loadRates } = createApiApp();
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', apiApp);
 app.use(apiApp);
 
-loadSheet()
+Promise.all([loadSheet(), loadRates()])
   .catch((err) => {
     console.error('초기 시트 로드 실패:', err.message || err);
   })
