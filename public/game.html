@@ -30,9 +30,9 @@
         <option value="blackjack">Blackjack</option>
         <option value="redblack">Red Black</option>
         <option value="russianroulette">Russian Roulette</option>
-        <option value="formulahighlow">Formula High Low 2P</option>
         <option value="pvpbaccarat">PVP Baccarat</option>
         <option value="pvpblackjack">PVP Blackjack</option>
+        <option value="formulahighlow">Formula High Low 2P</option>
       </select>
     </div>
 
@@ -187,17 +187,35 @@
       </div>
 
       <div class="form-row">
+        <label>Player 1 HIGH formula</label><br />
+        <input id="formulaPlayerOneHigh" type="text" placeholder="Example: (1 + 2) * 3 / 4" />
+      </div>
+
+      <div class="form-row">
+        <label>Player 1 LOW formula</label><br />
+        <input id="formulaPlayerOneLow" type="text" placeholder="Required for LOW or SWING" />
+      </div>
+
+      <div class="form-row">
+        <label>Player 2 HIGH formula</label><br />
+        <input id="formulaPlayerTwoHigh" type="text" placeholder="Example: sqrt(4) + 3 - 2 / 1" />
+      </div>
+
+      <div class="form-row">
+        <label>Player 2 LOW formula</label><br />
+        <input id="formulaPlayerTwoLow" type="text" placeholder="Required for LOW or SWING" />
+      </div>
+
+      <div class="form-row">
         <label>Result memo</label><br />
         <textarea id="formulaMemo" placeholder="하이/로우/스윙 선택, 히든 카드 공개, 수식, 결과값, 동점 판정 근거를 적어두세요."></textarea>
       </div>
 
-      <div class="hint">Start deals hidden cards and 2 open cards. Deal final open adds the last open card. Resolve reveals choices and automatically finds each player's closest formulas for 20 and 1.</div>
+      <div class="hint">Deal final open creates copyable input logs for Player 1 and Player 2. Enter the formulas they submit, then resolve. Use sqrt(숫자), √숫자, ×, ÷, *, / as needed.</div>
 
       <button type="button" onclick="startFormulaHighLow()">Start Formula High Low</button>
       <button id="formulaFinalButton" type="button" onclick="dealFormulaHighLowFinalCard()" disabled>Deal final open</button>
-      <button id="formulaPreviewButton" type="button" onclick="previewFormulaHighLow()" disabled>Auto calculate</button>
-      <button id="formulaAutoResolveButton" type="button" onclick="autoResolveFormulaHighLow()" disabled>Resolve recommended</button>
-      <button id="formulaResolveButton" type="button" onclick="resolveFormulaHighLow()" disabled>Resolve Formula High Low</button>
+      <button id="formulaResolveButton" type="button" onclick="resolveFormulaHighLow()" disabled>Resolve submitted formulas</button>
       <pre id="formulaHighLowState">No Formula High Low in progress.</pre>
     </div>
 
@@ -243,7 +261,6 @@
     let activeRussianRouletteSessionId = null;
     let activePvpSessionId = null;
     let activeFormulaHighLowSessionId = null;
-    let latestFormulaHighLowState = null;
     const CHIP_LABELS = {
       red: 'Red',
       blue: 'Blue',
@@ -277,8 +294,6 @@
     const pvpStandButton = document.getElementById('pvpStandButton');
     const formulaHighLowStateBox = document.getElementById('formulaHighLowState');
     const formulaFinalButton = document.getElementById('formulaFinalButton');
-    const formulaPreviewButton = document.getElementById('formulaPreviewButton');
-    const formulaAutoResolveButton = document.getElementById('formulaAutoResolveButton');
     const formulaResolveButton = document.getElementById('formulaResolveButton');
     const balanceHint = document.getElementById('balanceHint');
 
@@ -748,8 +763,6 @@
       pvpStandButton.disabled = !activePvpSessionId;
       formulaFinalButton.disabled = !activeFormulaHighLowSessionId;
       formulaResolveButton.disabled = !activeFormulaHighLowSessionId;
-      formulaPreviewButton.disabled = !activeFormulaHighLowSessionId;
-      formulaAutoResolveButton.disabled = !activeFormulaHighLowSessionId;
 
       if (isRoulette) {
         updateRouletteDetailInput();
@@ -984,6 +997,7 @@ Winner: ${state.winnerName || '-'}`;
       }
 
       activeFormulaHighLowSessionId = data.state.id;
+      clearFormulaHighLowFormulaInputs();
       renderFormulaHighLowState(data.state);
       renderLogs(data.logs);
       mergePlayers(data.players);
@@ -1008,48 +1022,6 @@ Winner: ${state.winnerName || '-'}`;
       mergePlayers(data.players);
     }
 
-    async function previewFormulaHighLow() {
-      const res = await fetch('/api/formula-high-low/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: activeFormulaHighLowSessionId })
-      });
-
-      const data = await readResponse(res);
-
-      if (!res.ok) {
-        alert(data.error || 'Failed to calculate Formula High Low.');
-        return;
-      }
-
-      renderFormulaHighLowState(data.state, { applySuggestions: true });
-    }
-
-    function applyFormulaSuggestedChoices(state = latestFormulaHighLowState) {
-      const suggestions = state?.evaluation?.suggestedChoices;
-
-      if (!suggestions) {
-        return false;
-      }
-
-      document.getElementById('formulaPlayerOneChoice').value = suggestions.playerOne || 'HIGH';
-      document.getElementById('formulaPlayerTwoChoice').value = suggestions.playerTwo || 'HIGH';
-      updateBalanceHint();
-      return true;
-    }
-
-    async function autoResolveFormulaHighLow() {
-      if (!applyFormulaSuggestedChoices()) {
-        await previewFormulaHighLow();
-
-        if (!applyFormulaSuggestedChoices()) {
-          return;
-        }
-      }
-
-      return resolveFormulaHighLow();
-    }
-
     async function resolveFormulaHighLow() {
       const res = await fetch('/api/formula-high-low/resolve', {
         method: 'POST',
@@ -1058,6 +1030,10 @@ Winner: ${state.winnerName || '-'}`;
           sessionId: activeFormulaHighLowSessionId,
           playerOneChoice: document.getElementById('formulaPlayerOneChoice').value,
           playerTwoChoice: document.getElementById('formulaPlayerTwoChoice').value,
+          playerOneHighFormula: document.getElementById('formulaPlayerOneHigh').value,
+          playerOneLowFormula: document.getElementById('formulaPlayerOneLow').value,
+          playerTwoHighFormula: document.getElementById('formulaPlayerTwoHigh').value,
+          playerTwoLowFormula: document.getElementById('formulaPlayerTwoLow').value,
           memo: document.getElementById('formulaMemo').value
         })
       });
@@ -1074,6 +1050,17 @@ Winner: ${state.winnerName || '-'}`;
       mergePlayers(data.players);
       activeFormulaHighLowSessionId = null;
       alert(data.state.result || 'Formula High Low resolved.');
+    }
+
+    function clearFormulaHighLowFormulaInputs() {
+      [
+        'formulaPlayerOneHigh',
+        'formulaPlayerOneLow',
+        'formulaPlayerTwoHigh',
+        'formulaPlayerTwoLow'
+      ].forEach((id) => {
+        document.getElementById(id).value = '';
+      });
     }
 
     function formatFormulaEval(evalState, side) {
@@ -1099,25 +1086,19 @@ Winner: ${state.winnerName || '-'}`;
       return '-';
     }
 
-    function renderFormulaHighLowState(state, options = {}) {
-      latestFormulaHighLowState = state;
-
-      if (options.applySuggestions || (state.stage === 'final' && state.evaluation?.suggestedChoices)) {
-        applyFormulaSuggestedChoices(state);
-      }
-
+    function renderFormulaHighLowState(state) {
       const p1 = state.playerOneState;
       const p2 = state.playerTwoState;
       const p1Eval = state.evaluation?.playerOne;
       const p2Eval = state.evaluation?.playerTwo;
-      const suggestedChoices = state.evaluation?.suggestedChoices;
-      const suggestedText = suggestedChoices
-        ? `P1 ${suggestedChoices.playerOne} / P2 ${suggestedChoices.playerTwo}`
-        : '-';
+      const choiceText = state.evaluation?.choices
+        ? `P1 ${state.evaluation.choices.playerOne} / P2 ${state.evaluation.choices.playerTwo}`
+        : `P1 ${document.getElementById('formulaPlayerOneChoice').value} / P2 ${document.getElementById('formulaPlayerTwoChoice').value}`;
 
       formulaHighLowStateBox.textContent = `Formula High Low 2P
 Round: ${state.roundNumber || '-'}
 Stage: ${state.stage}
+Markers: ${choiceText}
 Player 1: ${state.playerOne.name}
 Hidden: ${p1.hidden}
 Open: ${p1.openSlots.join(', ') || '-'}
@@ -1138,14 +1119,10 @@ Discarded symbols: ${state.discardedCards.join(', ') || '-'}
 Remaining deck: ${state.remainingCards}
 High winner: ${getFormulaWinnerLabelFromKey(state, state.evaluation?.highWinner)}
 Low winner: ${getFormulaWinnerLabelFromKey(state, state.evaluation?.lowWinner)}
-Recommended markers: ${suggestedText}
-Recommended winner: ${state.evaluation?.suggestedWinnerName || '-'}
 Winner: ${state.winnerName || '-'}
 Result: ${state.result || 'in progress'}`;
 
       formulaFinalButton.disabled = state.stage !== 'initial';
-      formulaPreviewButton.disabled = state.stage !== 'final';
-      formulaAutoResolveButton.disabled = state.stage !== 'final' || !state.evaluation?.suggestedChoices;
       formulaResolveButton.disabled = state.stage !== 'final';
     }
 
