@@ -4,6 +4,18 @@
     {
       "source": "/",
       "destination": "/dashboard.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/dashboard.html"
+    },
+    {
+      "source": "/game",
+      "destination": "/game.html"
+    },
+    {
+      "source": "/exchange",
+      "destination": "/exchange.html"
     }
   ]
 }
