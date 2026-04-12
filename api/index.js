@@ -1494,6 +1494,10 @@ function getLimitGameType(gameType) {
     return 'blackjack';
   }
 
+  if (normalized === 'formulahighlow') {
+    return 'highlow';
+  }
+
   return normalized;
 }
 
@@ -2771,51 +2775,56 @@ function formatFormulaHighLowRevealRule(roundNumber) {
     : '하이/로우 선택 일반 공개';
 }
 
-function makeFormulaHighLowParticipantLines(participantEntries) {
-  return participantEntries
-    .map((entry) => `- ${entry.player.name} (#${entry.player.id}): ${entry.contribution}개`)
-    .join('\n');
+function getFormulaHighLowWinnerLabel(settlement) {
+  if (settlement.winnerKey === 'playerOne') {
+    return settlement.playerOne.name;
+  }
+
+  if (settlement.winnerKey === 'playerTwo') {
+    return settlement.playerTwo.name;
+  }
+
+  return '무승부 / 팟 분배';
 }
 
-function makeFormulaHighLowRecipientLine(recipientPlayers, share) {
-  return recipientPlayers
-    .map((player) => `${player.name} (#${player.id}) ${share}개`)
-    .join(', ');
+function getFormulaHighLowPayoutText(settlement) {
+  if (settlement.winnerKey === 'tie') {
+    return `${settlement.playerOne.name} ${settlement.bet}개, ${settlement.playerTwo.name} ${settlement.bet}개`;
+  }
+
+  return `${getFormulaHighLowWinnerLabel(settlement)} ${settlement.pot}개`;
 }
 
 function makeFormulaHighLowLog(settlement) {
-  const currentLines = settlement.changedPlayers
-    .map((player) => `- ${player.name}: ${chipStr(player)}`)
-    .join('\n');
-
   return `수식 하이 로우 정산
 라운드: ${formatFormulaHighLowRound(settlement.roundNumber)}
 공개 규칙: ${formatFormulaHighLowRevealRule(settlement.roundNumber)}
 칩 색: ${settlement.color}
+플레이어 1: ${settlement.playerOne.name}
+플레이어 2: ${settlement.playerTwo.name}
+각자 베팅: ${settlement.bet}개
 총 팟: ${settlement.pot}개
-지급: ${makeFormulaHighLowRecipientLine(settlement.recipientPlayers, settlement.share)}
-버림: ${settlement.remainder}개
-
-참가/기여
-${makeFormulaHighLowParticipantLines(settlement.participantEntries)}
+승자: ${getFormulaHighLowWinnerLabel(settlement)}
+지급: ${getFormulaHighLowPayoutText(settlement)}
 
 결과 메모
 ${settlement.memo || '-'}
 
 현재
-${currentLines}`;
+${settlement.playerOne.name}: ${chipStr(settlement.playerOne)}
+${settlement.playerTwo.name}: ${chipStr(settlement.playerTwo)}`;
 }
 
 function makeFormulaHighLowPublicLog(settlement) {
   return `수식 하이 로우
 라운드: ${formatFormulaHighLowRound(settlement.roundNumber)}
 공개 규칙: ${formatFormulaHighLowRevealRule(settlement.roundNumber)}
+플레이어 1: ${settlement.playerOne.name}
+플레이어 2: ${settlement.playerTwo.name}
+각자 베팅: ${settlement.color} ${settlement.bet}개
 총 팟: ${settlement.color} ${settlement.pot}개
-지급: ${makeFormulaHighLowRecipientLine(settlement.recipientPlayers, settlement.share)}
-버림: ${settlement.remainder}개
-
-참가/기여
-${makeFormulaHighLowParticipantLines(settlement.participantEntries)}
+승자: ${getFormulaHighLowWinnerLabel(settlement)}
+지급: ${getFormulaHighLowPayoutText(settlement)}
 
 결과 메모
 ${settlement.memo || '-'}`;
@@ -2957,113 +2966,69 @@ app.post('/rates', async (req, res) => {
 app.post('/formula-high-low/settle', async (req, res) => {
   try {
     const {
+      playerId,
+      opponentId,
       color,
+      amount,
+      winnerKey,
       roundNumber,
       memo = ''
     } = req.body;
-    const rawParticipantContributions = Array.isArray(req.body.participantContributions)
-      ? req.body.participantContributions
-      : Array.isArray(req.body.entries)
-        ? req.body.entries
-        : [];
-    const rawRecipientIds = Array.isArray(req.body.recipientIds)
-      ? req.body.recipientIds
-      : Array.isArray(req.body.recipients)
-        ? req.body.recipients
-        : [];
+    const bet = toChipAmount(amount);
+    const nextWinnerKey = String(winnerKey || '').trim();
 
     if (!validateColor(color)) {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    const participantEntries = rawParticipantContributions.map((entry) => ({
-      playerId: Number(entry?.playerId),
-      contribution: toChipAmount(entry?.contribution)
-    }));
-    const participantIds = participantEntries.map((entry) => entry.playerId);
-    const recipientIds = rawRecipientIds
-      .map((entry) => Number(typeof entry === 'object' ? entry?.playerId : entry));
-
-    if (participantEntries.length < 2) {
-      return res.status(400).json({ error: '수식 하이 로우는 참가자 2명 이상이 필요합니다.' });
+    if (!Number.isFinite(bet) || bet <= 0) {
+      return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
-    if (participantEntries.some((entry) => !Number.isFinite(entry.playerId))) {
-      return res.status(400).json({ error: '참가자 선택이 올바르지 않습니다.' });
+    if (!['playerOne', 'playerTwo', 'tie'].includes(nextWinnerKey)) {
+      return res.status(400).json({ error: '승자 선택은 playerOne, playerTwo, tie 중 하나여야 합니다.' });
     }
 
-    if (new Set(participantIds).size !== participantIds.length) {
-      return res.status(400).json({ error: '같은 참가자를 중복 선택할 수 없습니다.' });
+    if (Number(playerId) === Number(opponentId)) {
+      return res.status(400).json({ error: '서로 다른 플레이어를 선택해야 합니다.' });
     }
 
-    if (participantEntries.some((entry) => !Number.isFinite(entry.contribution) || entry.contribution <= 0)) {
-      return res.status(400).json({ error: '참가자별 기여금은 1개 이상이어야 합니다.' });
-    }
+    await loadPlayersByIds([playerId, opponentId]);
 
-    if (!recipientIds.length) {
-      return res.status(400).json({ error: '팟을 받을 플레이어를 1명 이상 선택해야 합니다.' });
-    }
+    const playerOne = getPlayerById(playerId);
+    const playerTwo = getPlayerById(opponentId);
 
-    if (recipientIds.some((id) => !Number.isFinite(id))) {
-      return res.status(400).json({ error: '수령자 선택이 올바르지 않습니다.' });
-    }
-
-    if (new Set(recipientIds).size !== recipientIds.length) {
-      return res.status(400).json({ error: '같은 수령자를 중복 선택할 수 없습니다. 스윙 성공은 수령자 1명으로 입력하세요.' });
-    }
-
-    const participantIdSet = new Set(participantIds);
-
-    if (recipientIds.some((id) => !participantIdSet.has(id))) {
-      return res.status(400).json({ error: '수령자는 참가자 중에서 선택해야 합니다.' });
-    }
-
-    await loadPlayersByIds([...new Set([...participantIds, ...recipientIds])]);
-
-    const participantEntriesWithPlayers = participantEntries.map((entry) => ({
-      ...entry,
-      player: getPlayerById(entry.playerId)
-    }));
-    const recipientPlayers = recipientIds.map(getPlayerById);
-
-    if (participantEntriesWithPlayers.some((entry) => !entry.player) || recipientPlayers.some((player) => !player)) {
+    if (!playerOne || !playerTwo) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
 
-    const shortPlayers = participantEntriesWithPlayers
-      .filter((entry) => entry.player[color] < entry.contribution)
-      .map((entry) => `${entry.player.name}: 보유 ${entry.player[color] || 0}개 / 필요 ${entry.contribution}개`);
-
-    if (shortPlayers.length) {
-      return res.status(400).json({ error: `보유 칩이 부족합니다.\n${shortPlayers.join('\n')}` });
+    if (playerOne[color] < bet || playerTwo[color] < bet) {
+      return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
     }
 
-    const pot = participantEntriesWithPlayers.reduce((total, entry) => total + entry.contribution, 0);
-    const share = Math.floor(pot / recipientPlayers.length);
-    const remainder = pot % recipientPlayers.length;
-    const changedPlayersById = new Map();
+    assertGameLimitAvailable(playerOne, 'formulahighlow');
+    assertGameLimitAvailable(playerTwo, 'formulahighlow');
+    consumeGameLimit(playerOne, 'formulahighlow');
+    consumeGameLimit(playerTwo, 'formulahighlow');
 
-    participantEntriesWithPlayers.forEach((entry) => {
-      entry.player[color] -= entry.contribution;
-      changedPlayersById.set(entry.player.id, entry.player);
-    });
+    if (nextWinnerKey === 'playerOne') {
+      playerOne[color] += bet;
+      playerTwo[color] -= bet;
+    } else if (nextWinnerKey === 'playerTwo') {
+      playerOne[color] -= bet;
+      playerTwo[color] += bet;
+    }
 
-    recipientPlayers.forEach((player) => {
-      player[color] += share;
-      changedPlayersById.set(player.id, player);
-    });
-
-    const changedPlayers = [...changedPlayersById.values()];
     const parsedRoundNumber = toChipAmount(roundNumber);
+    const pot = bet * 2;
     const settlement = {
       roundNumber: Number.isFinite(parsedRoundNumber) && parsedRoundNumber > 0 ? parsedRoundNumber : null,
       color,
+      bet,
       pot,
-      share,
-      remainder,
-      participantEntries: participantEntriesWithPlayers,
-      recipientPlayers,
-      changedPlayers,
+      winnerKey: nextWinnerKey,
+      playerOne,
+      playerTwo,
       memo: String(memo || '').trim()
     };
 
@@ -3073,7 +3038,7 @@ app.post('/formula-high-low/settle', async (req, res) => {
         makeFormulaHighLowLog(settlement),
         makeFormulaHighLowPublicLog(settlement)
       ),
-      savePlayers(changedPlayers)
+      savePlayers([playerOne, playerTwo])
     ]);
 
     emitRealtime('update', players);
@@ -3083,11 +3048,11 @@ app.post('/formula-high-low/settle', async (req, res) => {
     res.json({
       ok: true,
       pot,
-      share,
-      remainder,
+      payout: nextWinnerKey === 'tie' ? bet : pot,
+      winnerKey: nextWinnerKey,
       log: log.text,
       logs: [log],
-      players: serializePlayers(changedPlayers)
+      players: serializePlayers([playerOne, playerTwo])
     });
   } catch (err) {
     console.error(err);
