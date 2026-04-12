@@ -273,10 +273,7 @@
       highlow: 'High Low',
       baccarat: 'Baccarat',
       blackjack: 'Blackjack',
-      pvpbaccarat: 'PVP Baccarat',
-      pvpblackjack: 'PVP Blackjack',
-      redblack: 'Red Black',
-      formulahighlow: 'Formula High Low 2P'
+      redblack: 'Red Black'
     };
 
     const logList = document.getElementById('logList');
@@ -347,7 +344,10 @@
     function formatPlayerOption(player) {
       const color = document.getElementById('color').value;
       const gameType = document.getElementById('gameType').value;
-      return `${player.name} (#${player.id}) - ${CHIP_LABELS[color]}:${getChipBalance(player, color)} - Plays:${formatGameLimit(getPlayerGameLimit(player, gameType))}`;
+      const playsText = hasGameLimit(gameType)
+        ? ` - Plays:${formatGameLimit(getPlayerGameLimit(player, gameType))}`
+        : '';
+      return `${player.name} (#${player.id}) - ${CHIP_LABELS[color]}:${getChipBalance(player, color)}${playsText}`;
     }
 
     function getChipAmount(value) {
@@ -363,19 +363,11 @@
     }
 
     function getLimitGameType(gameType) {
-      if (gameType === 'pvpbaccarat') {
-        return 'baccarat';
-      }
+      return String(gameType || '').toLowerCase();
+    }
 
-      if (gameType === 'pvpblackjack') {
-        return 'blackjack';
-      }
-
-      if (gameType === 'formulahighlow') {
-        return 'highlow';
-      }
-
-      return gameType;
+    function hasGameLimit(gameType) {
+      return Boolean(GAME_LIMIT_LABELS[getLimitGameType(gameType)]);
     }
 
     function getPlayerGameLimit(player, gameType) {
@@ -387,6 +379,10 @@
     }
 
     function hasGameLimitAvailable(player, gameType) {
+      if (!hasGameLimit(gameType)) {
+        return true;
+      }
+
       const limit = getPlayerGameLimit(player, gameType);
       return !Number.isFinite(Number(limit)) || Number(limit) > 0;
     }
@@ -551,9 +547,8 @@
           .filter(Boolean);
         const rows = selectedPlayers.map((player) => {
           const balance = getChipBalance(player, color);
-          const limit = formatGameLimit(getPlayerGameLimit(player, gameType));
           const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
-          return `${player.name} ${balance}개 ${status} / plays ${limit}`;
+          return `${player.name} ${balance}개 ${status}`;
         });
 
         balanceHint.textContent = rows.length
@@ -568,9 +563,8 @@
           .filter(Boolean);
         const rows = selectedPlayers.map((player) => {
           const balance = getChipBalance(player, color);
-          const limit = formatGameLimit(getPlayerGameLimit(player, gameType));
           const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
-          return `${player.name} ${balance}개 ${status} / plays ${limit}`;
+          return `${player.name} ${balance}개 ${status}`;
         });
         const markerText = `P1 ${document.getElementById('formulaPlayerOneChoice').value} / P2 ${document.getElementById('formulaPlayerTwoChoice').value}`;
 

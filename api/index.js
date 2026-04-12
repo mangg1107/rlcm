@@ -1654,21 +1654,7 @@ function getPlayerChipValue(player, rateMap = rates) {
 }
 
 function getLimitGameType(gameType) {
-  const normalized = String(gameType || '').toLowerCase();
-
-  if (normalized === 'pvpbaccarat') {
-    return 'baccarat';
-  }
-
-  if (normalized === 'pvpblackjack') {
-    return 'blackjack';
-  }
-
-  if (normalized === 'formulahighlow') {
-    return 'highlow';
-  }
-
-  return normalized;
+  return String(gameType || '').toLowerCase();
 }
 
 function getGameLimitConfig(gameType) {
@@ -4245,11 +4231,6 @@ app.post('/formula-high-low/start', async (req, res) => {
       return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
     }
 
-    assertGameLimitAvailable(playerOne, 'formulahighlow');
-    assertGameLimitAvailable(playerTwo, 'formulahighlow');
-    consumeGameLimit(playerOne, 'formulahighlow');
-    consumeGameLimit(playerTwo, 'formulahighlow');
-
     const deck = createFormulaHighLowDeck();
     const discardedCards = [];
     const session = {
@@ -4493,12 +4474,6 @@ app.post('/pvp-baccarat/start', async (req, res) => {
       return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
     }
 
-    assertGameLimitAvailable(playerOne, 'pvpbaccarat');
-    assertGameLimitAvailable(playerTwo, 'pvpbaccarat');
-
-    consumeGameLimit(playerOne, 'pvpbaccarat');
-    consumeGameLimit(playerTwo, 'pvpbaccarat');
-
     const shoe = createBaccaratShoe();
     const session = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -4567,12 +4542,6 @@ app.post('/pvp-blackjack/start', async (req, res) => {
     if (playerOne[color] < bet || playerTwo[color] < bet) {
       return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
     }
-
-    assertGameLimitAvailable(playerOne, 'pvpblackjack');
-    assertGameLimitAvailable(playerTwo, 'pvpblackjack');
-
-    consumeGameLimit(playerOne, 'pvpblackjack');
-    consumeGameLimit(playerTwo, 'pvpblackjack');
 
     const deck = createBlackjackDeck();
     const session = {
