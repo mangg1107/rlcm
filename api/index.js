@@ -3559,6 +3559,11 @@ function getFormulaHighLowSessionState(session, options = {}) {
       playerOne: getFormulaEvaluationSummary(evaluation.playerOne),
       playerTwo: getFormulaEvaluationSummary(evaluation.playerTwo),
       choices: evaluation.choices || {},
+      suggestedChoices: evaluation.suggestedChoices || evaluation.choices || {},
+      suggestedWinnerKey: evaluation.suggestedWinnerKey || evaluation.winnerKey || '',
+      suggestedWinnerName: evaluation.suggestedWinnerKey || evaluation.winnerKey
+        ? getFormulaWinnerName({ name: playerOneName }, { name: playerTwoName }, evaluation.suggestedWinnerKey || evaluation.winnerKey)
+        : '',
       highWinner: evaluation.highWinner || '',
       lowWinner: evaluation.lowWinner || '',
       winnerKey: evaluation.winnerKey || ''
@@ -3580,6 +3585,48 @@ function evaluateFormulaHighLowSession(session, choices) {
     playerTwo,
     choices: normalizedChoices,
     ...outcome
+  };
+}
+
+function getFormulaSuggestedChoice(key, highWinner, lowWinner, playerEval) {
+  if (highWinner === key && lowWinner === key) {
+    return 'SWING';
+  }
+
+  if (highWinner === key) {
+    return 'HIGH';
+  }
+
+  if (lowWinner === key) {
+    return 'LOW';
+  }
+
+  const highDistance = playerEval?.high?.distance ?? Number.POSITIVE_INFINITY;
+  const lowDistance = playerEval?.low?.distance ?? Number.POSITIVE_INFINITY;
+  return highDistance <= lowDistance ? 'HIGH' : 'LOW';
+}
+
+function previewFormulaHighLowSession(session) {
+  const playerOne = evaluateFormulaPlayerState(session.playerOneState);
+  const playerTwo = evaluateFormulaPlayerState(session.playerTwoState);
+  const sideEvaluation = { playerOne, playerTwo };
+  const highWinner = compareFormulaSide(playerOne, playerTwo, 'HIGH');
+  const lowWinner = compareFormulaSide(playerOne, playerTwo, 'LOW');
+  const choices = {
+    playerOne: getFormulaSuggestedChoice('playerOne', highWinner, lowWinner, playerOne),
+    playerTwo: getFormulaSuggestedChoice('playerTwo', highWinner, lowWinner, playerTwo)
+  };
+  const outcome = getFormulaOverallWinner(sideEvaluation, choices);
+
+  return {
+    playerOne,
+    playerTwo,
+    choices,
+    suggestedChoices: choices,
+    suggestedWinnerKey: outcome.winnerKey,
+    highWinner,
+    lowWinner,
+    winnerKey: outcome.winnerKey
   };
 }
 
@@ -3954,6 +4001,7 @@ app.post('/formula-high-low/final-card', async (req, res) => {
     dealFormulaFinalOpenSlot(session.playerOneState, session.deck, session.discardedCards);
     dealFormulaFinalOpenSlot(session.playerTwoState, session.deck, session.discardedCards);
     session.stage = 'final';
+    const evaluation = previewFormulaHighLowSession(session);
 
     const [log] = await Promise.all([
       addLog(
@@ -3969,7 +4017,7 @@ app.post('/formula-high-low/final-card', async (req, res) => {
 
     res.json({
       ok: true,
-      state: getFormulaHighLowSessionState(session, { revealHidden: true }),
+      state: getFormulaHighLowSessionState(session, { revealHidden: true, evaluation }),
       log: log.text,
       logs: [log],
       players: serializePlayers([playerOne, playerTwo])
@@ -3977,6 +4025,31 @@ app.post('/formula-high-low/final-card', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 최종 카드 처리 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/formula-high-low/preview', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const session = await getFormulaHighLowSession(sessionId);
+
+    if (!session) {
+      return res.status(400).json({ error: '진행 중인 수식 하이 로우가 없습니다.' });
+    }
+
+    if (session.stage !== 'final') {
+      return res.status(400).json({ error: '최종 오픈 카드까지 받은 뒤 미리 계산할 수 있습니다.' });
+    }
+
+    const evaluation = previewFormulaHighLowSession(session);
+
+    res.json({
+      ok: true,
+      state: getFormulaHighLowSessionState(session, { revealHidden: true, evaluation })
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 미리 계산 중 오류가 발생했습니다.' });
   }
 });
 

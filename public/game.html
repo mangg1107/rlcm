@@ -38,7 +38,7 @@
 
     <div class="form-row">
       <label>Chip color</label><br />
-      <select id="color" onchange="updateBalanceHint(); updateRussianRoulettePlayers(); updateFormulaHighLowPlayers();">
+      <select id="color" onchange="updateBalanceHint(); updateRussianRoulettePlayers(); updatePvpPlayers(); updateFormulaHighLowPlayers();">
         <option value="red">Red</option>
         <option value="blue">Blue</option>
         <option value="green">Green</option>
@@ -130,8 +130,8 @@
 
     <div id="pvpFields" style="display:none;">
       <div class="form-row">
-        <label>Opponent player</label><br />
-        <select id="pvpOpponentId" onchange="updateBalanceHint()"></select>
+        <label>Participants</label><br />
+        <div id="pvpParticipantInputs"></div>
       </div>
 
       <button id="pvpStartButton" type="button" onclick="startPvpGame()">Start PVP</button>
@@ -164,8 +164,8 @@
       </div>
 
       <div class="form-row">
-        <label>Opponent player</label><br />
-        <select id="formulaOpponentId" onchange="updateBalanceHint()"></select>
+        <label>Participants</label><br />
+        <div id="formulaParticipantInputs"></div>
       </div>
 
       <div class="form-row">
@@ -195,6 +195,8 @@
 
       <button type="button" onclick="startFormulaHighLow()">Start Formula High Low</button>
       <button id="formulaFinalButton" type="button" onclick="dealFormulaHighLowFinalCard()" disabled>Deal final open</button>
+      <button id="formulaPreviewButton" type="button" onclick="previewFormulaHighLow()" disabled>Auto calculate</button>
+      <button id="formulaAutoResolveButton" type="button" onclick="autoResolveFormulaHighLow()" disabled>Resolve recommended</button>
       <button id="formulaResolveButton" type="button" onclick="resolveFormulaHighLow()" disabled>Resolve Formula High Low</button>
       <pre id="formulaHighLowState">No Formula High Low in progress.</pre>
     </div>
@@ -241,6 +243,7 @@
     let activeRussianRouletteSessionId = null;
     let activePvpSessionId = null;
     let activeFormulaHighLowSessionId = null;
+    let latestFormulaHighLowState = null;
     const CHIP_LABELS = {
       red: 'Red',
       blue: 'Blue',
@@ -274,6 +277,8 @@
     const pvpStandButton = document.getElementById('pvpStandButton');
     const formulaHighLowStateBox = document.getElementById('formulaHighLowState');
     const formulaFinalButton = document.getElementById('formulaFinalButton');
+    const formulaPreviewButton = document.getElementById('formulaPreviewButton');
+    const formulaAutoResolveButton = document.getElementById('formulaAutoResolveButton');
     const formulaResolveButton = document.getElementById('formulaResolveButton');
     const balanceHint = document.getElementById('balanceHint');
 
@@ -283,6 +288,7 @@
 
       renderPlayerOptions();
       updateRussianRoulettePlayers();
+      updatePvpPlayers();
       updateFormulaHighLowPlayers();
       updateBalanceHint();
     }
@@ -305,17 +311,14 @@
 
       renderPlayerOptions();
       updateRussianRoulettePlayers();
+      updatePvpPlayers();
       updateFormulaHighLowPlayers();
       updateBalanceHint();
     }
 
     function renderPlayerOptions() {
       const select = document.getElementById('playerId');
-      const pvpSelect = document.getElementById('pvpOpponentId');
-      const formulaSelect = document.getElementById('formulaOpponentId');
       const selectedValue = select.value;
-      const selectedPvpValue = pvpSelect.value;
-      const selectedFormulaValue = formulaSelect.value;
 
       select.innerHTML = players
         .map((p) => `<option value="${p.id}">${formatPlayerOption(p)}</option>`)
@@ -323,34 +326,6 @@
 
       if (players.some((p) => String(p.id) === selectedValue)) {
         select.value = selectedValue;
-      }
-
-      pvpSelect.innerHTML = players
-        .map((p) => `<option value="${p.id}">${formatPlayerOption(p)}</option>`)
-        .join('');
-
-      if (players.some((p) => String(p.id) === selectedPvpValue) && selectedPvpValue !== select.value) {
-        pvpSelect.value = selectedPvpValue;
-      } else {
-        const nextOpponent = players.find((p) => String(p.id) !== select.value);
-
-        if (nextOpponent) {
-          pvpSelect.value = String(nextOpponent.id);
-        }
-      }
-
-      formulaSelect.innerHTML = players
-        .map((p) => `<option value="${p.id}">${formatPlayerOption(p)}</option>`)
-        .join('');
-
-      if (players.some((p) => String(p.id) === selectedFormulaValue) && selectedFormulaValue !== select.value) {
-        formulaSelect.value = selectedFormulaValue;
-      } else {
-        const nextOpponent = players.find((p) => String(p.id) !== select.value);
-
-        if (nextOpponent) {
-          formulaSelect.value = String(nextOpponent.id);
-        }
       }
     }
 
@@ -468,19 +443,84 @@
       return true;
     }
 
-    function updateFormulaHighLowPlayers() {
-      renderPlayerOptions();
-      updateBalanceHint();
+    function renderTwoPlayerInputs(containerId, selectClassName) {
+      const container = document.getElementById(containerId);
+
+      if (!container) {
+        return;
+      }
+
+      const previousIds = [...container.querySelectorAll(`.${selectClassName}`)]
+        .map((select) => Number(select.value));
+      const usedIds = new Set();
+
+      container.innerHTML = '';
+
+      for (let index = 0; index < 2; index += 1) {
+        let selectedId = previousIds[index];
+
+        if (!players.some((p) => p.id === selectedId) || usedIds.has(selectedId)) {
+          selectedId = players.find((p) => !usedIds.has(p.id))?.id;
+        }
+
+        if (Number.isFinite(selectedId)) {
+          usedIds.add(selectedId);
+        }
+
+        const row = document.createElement('div');
+        const label = document.createElement('label');
+        const select = document.createElement('select');
+
+        row.className = 'participant-row';
+        label.textContent = `Player ${index + 1}`;
+        select.className = selectClassName;
+        select.onchange = updateBalanceHint;
+        select.innerHTML = '<option value="">Select player</option>' + players
+          .map((p) => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${formatPlayerOption(p)}</option>`)
+          .join('');
+        select.value = Number.isFinite(selectedId) ? String(selectedId) : '';
+
+        row.append(label, select);
+        container.appendChild(row);
+      }
     }
 
-    function validateFormulaHighLowStart(playerId, opponentId, color, amount) {
-      if (Number(playerId) === Number(opponentId)) {
-        alert('Choose two different players.');
+    function getTwoPlayerParticipantIds(selectClassName) {
+      return [...document.querySelectorAll(`.${selectClassName}`)]
+        .map((select) => (select.value === '' ? NaN : Number(select.value)));
+    }
+
+    function validateTwoPlayerParticipants(participantIds, color, amount, label) {
+      const bet = getChipAmount(amount);
+
+      if (participantIds.length !== 2 || participantIds.some((id) => !Number.isFinite(id))) {
+        alert(`Choose 2 players for ${label}.`);
         return false;
       }
 
-      return validatePlayerBet(playerId, color, amount, 'Player 1') &&
-        validatePlayerBet(opponentId, color, amount, 'Player 2');
+      return validatePvpBet(participantIds[0], participantIds[1], color, bet);
+    }
+
+    function updatePvpPlayers() {
+      renderTwoPlayerInputs('pvpParticipantInputs', 'pvp-participant-select');
+      updateBalanceHint();
+    }
+
+    function getPvpParticipantIds() {
+      return getTwoPlayerParticipantIds('pvp-participant-select');
+    }
+
+    function updateFormulaHighLowPlayers() {
+      renderTwoPlayerInputs('formulaParticipantInputs', 'formula-participant-select');
+      updateBalanceHint();
+    }
+
+    function getFormulaParticipantIds() {
+      return getTwoPlayerParticipantIds('formula-participant-select');
+    }
+
+    function validateFormulaHighLowStart(participantIds, color, amount) {
+      return validateTwoPlayerParticipants(participantIds, color, amount, 'Formula High Low');
     }
 
     function updateBalanceHint() {
@@ -491,10 +531,9 @@
       renderPlayerOptions();
 
       if (gameType === 'pvpbaccarat' || gameType === 'pvpblackjack') {
-        const selectedPlayers = [
-          getPlayerById(document.getElementById('playerId').value),
-          getPlayerById(document.getElementById('pvpOpponentId').value)
-        ].filter(Boolean);
+        const selectedPlayers = getPvpParticipantIds()
+          .map(getPlayerById)
+          .filter(Boolean);
         const rows = selectedPlayers.map((player) => {
           const balance = getChipBalance(player, color);
           const limit = formatGameLimit(getPlayerGameLimit(player, gameType));
@@ -509,10 +548,9 @@
       }
 
       if (gameType === 'formulahighlow') {
-        const selectedPlayers = [
-          getPlayerById(document.getElementById('playerId').value),
-          getPlayerById(document.getElementById('formulaOpponentId').value)
-        ].filter(Boolean);
+        const selectedPlayers = getFormulaParticipantIds()
+          .map(getPlayerById)
+          .filter(Boolean);
         const rows = selectedPlayers.map((player) => {
           const balance = getChipBalance(player, color);
           const limit = formatGameLimit(getPlayerGameLimit(player, gameType));
@@ -704,12 +742,14 @@
       document.getElementById('formulaHighLowFields').style.display = isFormulaHighLow ? 'block' : 'none';
       document.getElementById('normalGameFields').style.display = isBlackjack || isRoulette || isHighLow || isBaccarat || isRedBlack || isPvp || isRussianRoulette || isFormulaHighLow ? 'none' : 'block';
       document.getElementById('blackjackControls').style.display = isBlackjack ? 'block' : 'none';
-      document.getElementById('playerField').style.display = isRussianRoulette ? 'none' : 'block';
+      document.getElementById('playerField').style.display = isRussianRoulette || isPvp || isFormulaHighLow ? 'none' : 'block';
       pvpStartButton.textContent = isPvpBaccarat ? 'Start PVP Baccarat' : 'Start PVP Blackjack';
       pvpHitButton.disabled = !activePvpSessionId;
       pvpStandButton.disabled = !activePvpSessionId;
       formulaFinalButton.disabled = !activeFormulaHighLowSessionId;
       formulaResolveButton.disabled = !activeFormulaHighLowSessionId;
+      formulaPreviewButton.disabled = !activeFormulaHighLowSessionId;
+      formulaAutoResolveButton.disabled = !activeFormulaHighLowSessionId;
 
       if (isRoulette) {
         updateRouletteDetailInput();
@@ -717,6 +757,10 @@
 
       if (isRussianRoulette) {
         updateRussianRoulettePlayers();
+      }
+
+      if (isPvp) {
+        updatePvpPlayers();
       }
 
       if (isFormulaHighLow) {
@@ -826,12 +870,14 @@
 
     async function startPvpGame() {
       const gameType = document.getElementById('gameType').value;
+      const participantIds = getPvpParticipantIds();
       const payload = {
         ...getBasePayload(),
-        opponentId: Number(document.getElementById('pvpOpponentId').value)
+        playerId: participantIds[0],
+        opponentId: participantIds[1]
       };
 
-      if (!validatePvpBet(payload.playerId, payload.opponentId, payload.color, payload.amount)) {
+      if (!validateTwoPlayerParticipants(participantIds, payload.color, payload.amount, 'PVP')) {
         return;
       }
 
@@ -912,13 +958,15 @@ Winner: ${state.winnerName || '-'}`;
     }
 
     async function startFormulaHighLow() {
+      const participantIds = getFormulaParticipantIds();
       const payload = {
         ...getBasePayload(),
-        opponentId: Number(document.getElementById('formulaOpponentId').value),
+        playerId: participantIds[0],
+        opponentId: participantIds[1],
         roundNumber: Number(document.getElementById('formulaRoundNumber').value)
       };
 
-      if (!validateFormulaHighLowStart(payload.playerId, payload.opponentId, payload.color, payload.amount)) {
+      if (!validateFormulaHighLowStart(participantIds, payload.color, payload.amount)) {
         return;
       }
 
@@ -960,6 +1008,48 @@ Winner: ${state.winnerName || '-'}`;
       mergePlayers(data.players);
     }
 
+    async function previewFormulaHighLow() {
+      const res = await fetch('/api/formula-high-low/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeFormulaHighLowSessionId })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to calculate Formula High Low.');
+        return;
+      }
+
+      renderFormulaHighLowState(data.state, { applySuggestions: true });
+    }
+
+    function applyFormulaSuggestedChoices(state = latestFormulaHighLowState) {
+      const suggestions = state?.evaluation?.suggestedChoices;
+
+      if (!suggestions) {
+        return false;
+      }
+
+      document.getElementById('formulaPlayerOneChoice').value = suggestions.playerOne || 'HIGH';
+      document.getElementById('formulaPlayerTwoChoice').value = suggestions.playerTwo || 'HIGH';
+      updateBalanceHint();
+      return true;
+    }
+
+    async function autoResolveFormulaHighLow() {
+      if (!applyFormulaSuggestedChoices()) {
+        await previewFormulaHighLow();
+
+        if (!applyFormulaSuggestedChoices()) {
+          return;
+        }
+      }
+
+      return resolveFormulaHighLow();
+    }
+
     async function resolveFormulaHighLow() {
       const res = await fetch('/api/formula-high-low/resolve', {
         method: 'POST',
@@ -993,11 +1083,37 @@ Winner: ${state.winnerName || '-'}`;
         : '-';
     }
 
-    function renderFormulaHighLowState(state) {
+    function getFormulaWinnerLabelFromKey(state, key) {
+      if (key === 'playerOne') {
+        return state.playerOne.name;
+      }
+
+      if (key === 'playerTwo') {
+        return state.playerTwo.name;
+      }
+
+      if (key === 'tie') {
+        return 'Split';
+      }
+
+      return '-';
+    }
+
+    function renderFormulaHighLowState(state, options = {}) {
+      latestFormulaHighLowState = state;
+
+      if (options.applySuggestions || (state.stage === 'final' && state.evaluation?.suggestedChoices)) {
+        applyFormulaSuggestedChoices(state);
+      }
+
       const p1 = state.playerOneState;
       const p2 = state.playerTwoState;
       const p1Eval = state.evaluation?.playerOne;
       const p2Eval = state.evaluation?.playerTwo;
+      const suggestedChoices = state.evaluation?.suggestedChoices;
+      const suggestedText = suggestedChoices
+        ? `P1 ${suggestedChoices.playerOne} / P2 ${suggestedChoices.playerTwo}`
+        : '-';
 
       formulaHighLowStateBox.textContent = `Formula High Low 2P
 Round: ${state.roundNumber || '-'}
@@ -1020,12 +1136,16 @@ Bet: ${state.color} ${state.bet}
 Pot: ${state.color} ${state.pot}
 Discarded symbols: ${state.discardedCards.join(', ') || '-'}
 Remaining deck: ${state.remainingCards}
-High winner: ${state.evaluation?.highWinner || '-'}
-Low winner: ${state.evaluation?.lowWinner || '-'}
+High winner: ${getFormulaWinnerLabelFromKey(state, state.evaluation?.highWinner)}
+Low winner: ${getFormulaWinnerLabelFromKey(state, state.evaluation?.lowWinner)}
+Recommended markers: ${suggestedText}
+Recommended winner: ${state.evaluation?.suggestedWinnerName || '-'}
 Winner: ${state.winnerName || '-'}
 Result: ${state.result || 'in progress'}`;
 
       formulaFinalButton.disabled = state.stage !== 'initial';
+      formulaPreviewButton.disabled = state.stage !== 'final';
+      formulaAutoResolveButton.disabled = state.stage !== 'final' || !state.evaluation?.suggestedChoices;
       formulaResolveButton.disabled = state.stage !== 'final';
     }
 
