@@ -31,9 +31,11 @@ let rateSheetReady = false;
 let blackjackSessionSheetReady = false;
 let baccaratSessionSheetReady = false;
 let russianRouletteSessionSheetReady = false;
+let pvpSessionSheetReady = false;
 let blackjackSessions = new Map();
 let baccaratSessions = new Map();
 let russianRouletteSessions = new Map();
+let pvpSessions = new Map();
 const COLORS = ['red', 'blue', 'green', 'yellow', 'white'];
 const CHIP_LABELS = {
   red: 'Red',
@@ -190,6 +192,30 @@ const RUSSIAN_ROULETTE_SESSION_HEADER = [
   'winnerId',
   'result',
   'lastAction',
+  'updatedAt'
+];
+const PVP_SESSION_SHEET_NAME = 'PVP세션';
+const PVP_SESSION_SHEET_REF = `'${PVP_SESSION_SHEET_NAME}'`;
+const PVP_SESSION_HEADER_RANGE = `${PVP_SESSION_SHEET_REF}!A1:Q1`;
+const PVP_SESSION_RANGE = `${PVP_SESSION_SHEET_REF}!A:Q`;
+const PVP_SESSION_ID_RANGE = `${PVP_SESSION_SHEET_REF}!A:A`;
+const PVP_SESSION_HEADER = [
+  'id',
+  'gameType',
+  'playerOneId',
+  'playerTwoId',
+  'color',
+  'bet',
+  'deck',
+  'shoe',
+  'playerOneCards',
+  'playerTwoCards',
+  'playerOneAction',
+  'playerTwoAction',
+  'turn',
+  'done',
+  'winnerKey',
+  'result',
   'updatedAt'
 ];
 
@@ -1154,6 +1180,150 @@ async function deleteRussianRouletteSession(sessionId) {
   russianRouletteSessions.delete(String(sessionId));
 }
 
+async function ensurePvpSessionSheetHeader() {
+  if (pvpSessionSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === PVP_SESSION_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: PVP_SESSION_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: PVP_SESSION_HEADER_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = PVP_SESSION_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: PVP_SESSION_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [PVP_SESSION_HEADER] }
+    });
+  }
+
+  pvpSessionSheetReady = true;
+}
+
+function parsePvpSessionRow(row) {
+  return {
+    id: row[0] || '',
+    gameType: row[1] || '',
+    playerOneId: Number(row[2]),
+    playerTwoId: Number(row[3]),
+    color: row[4] || '',
+    bet: toChipAmount(row[5]),
+    deck: parseJsonArray(row[6]),
+    shoe: parseJsonArray(row[7]),
+    playerOneCards: parseJsonArray(row[8]),
+    playerTwoCards: parseJsonArray(row[9]),
+    playerOneAction: row[10] || '',
+    playerTwoAction: row[11] || '',
+    turn: row[12] || 'playerOne',
+    done: row[13] === 'true',
+    winnerKey: row[14] || '',
+    result: row[15] || ''
+  };
+}
+
+function pvpSessionToRow(session) {
+  return [
+    session.id,
+    session.gameType,
+    session.playerOneId,
+    session.playerTwoId,
+    session.color,
+    session.bet,
+    JSON.stringify(session.deck || []),
+    JSON.stringify(session.shoe || []),
+    JSON.stringify(session.playerOneCards || []),
+    JSON.stringify(session.playerTwoCards || []),
+    session.playerOneAction || '',
+    session.playerTwoAction || '',
+    session.turn || '',
+    session.done ? 'true' : 'false',
+    session.winnerKey || '',
+    session.result || '',
+    new Date().toISOString()
+  ];
+}
+
+async function getPvpSessionRowNumber(sessionId) {
+  await ensurePvpSessionSheetHeader();
+  return findRowNumberByFirstColumnText(PVP_SESSION_ID_RANGE, sessionId);
+}
+
+async function getPvpSession(sessionId) {
+  const rowNumber = await getPvpSessionRowNumber(sessionId);
+
+  if (!rowNumber) {
+    pvpSessions.delete(String(sessionId));
+    return null;
+  }
+
+  const row = await readSingleRow(sheetRowRange(PVP_SESSION_SHEET_REF, 'Q', rowNumber));
+  const session = parsePvpSessionRow(row);
+
+  if (!session.id) {
+    pvpSessions.delete(String(sessionId));
+    return null;
+  }
+
+  withSessionRowNumber(session, rowNumber);
+  pvpSessions.set(String(session.id), session);
+  return session;
+}
+
+async function savePvpSession(session) {
+  let rowNumber = session._rowNumber || await getPvpSessionRowNumber(session.id);
+  const row = pvpSessionToRow(session);
+
+  if (rowNumber) {
+    await updateSingleRow(sheetRowRange(PVP_SESSION_SHEET_REF, 'Q', rowNumber), row);
+  } else {
+    const updatedRange = await appendSingleRow(PVP_SESSION_RANGE, row);
+    rowNumber = getRowNumberFromRange(updatedRange);
+  }
+
+  if (rowNumber) {
+    withSessionRowNumber(session, rowNumber);
+  }
+  pvpSessions.set(String(session.id), session);
+}
+
+async function deletePvpSession(sessionId) {
+  const cachedSession = pvpSessions.get(String(sessionId));
+  const rowNumber = cachedSession?._rowNumber || await getPvpSessionRowNumber(sessionId);
+
+  if (rowNumber) {
+    await clearSingleRow(sheetRowRange(PVP_SESSION_SHEET_REF, 'Q', rowNumber));
+  }
+
+  pvpSessions.delete(String(sessionId));
+}
+
 function parseLogRow(row) {
   return {
     id: Number(row[0]) || Date.parse(row[4]) || 0,
@@ -1313,8 +1483,22 @@ function getPlayerChipValue(player, rateMap = rates) {
   return COLORS.reduce((total, color) => total + ((player?.[color] || 0) * (rateMap[color] || 0)), 0);
 }
 
+function getLimitGameType(gameType) {
+  const normalized = String(gameType || '').toLowerCase();
+
+  if (normalized === 'pvpbaccarat') {
+    return 'baccarat';
+  }
+
+  if (normalized === 'pvpblackjack') {
+    return 'blackjack';
+  }
+
+  return normalized;
+}
+
 function getGameLimitConfig(gameType) {
-  return GAME_LIMIT_BY_TYPE.get(String(gameType || '').toLowerCase()) || null;
+  return GAME_LIMIT_BY_TYPE.get(getLimitGameType(gameType)) || null;
 }
 
 function getGameLimitValue(player, gameType) {
@@ -1556,6 +1740,33 @@ function finishBlackjackSession(player, session) {
   return session.result;
 }
 
+function getPvpBlackjackWinnerKey(playerOneValue, playerTwoValue) {
+  const playerOneBust = playerOneValue > 21;
+  const playerTwoBust = playerTwoValue > 21;
+
+  if (playerOneBust && playerTwoBust) {
+    return 'tie';
+  }
+
+  if (playerOneBust) {
+    return 'playerTwo';
+  }
+
+  if (playerTwoBust) {
+    return 'playerOne';
+  }
+
+  if (playerOneValue > playerTwoValue) {
+    return 'playerOne';
+  }
+
+  if (playerTwoValue > playerOneValue) {
+    return 'playerTwo';
+  }
+
+  return 'tie';
+}
+
 const ROULETTE_RED_NUMBERS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 
 function parseRouletteNumbers(value) {
@@ -1785,6 +1996,54 @@ function shouldBankerDraw(bankerTotal, playerThirdValue) {
   return false;
 }
 
+function dealBaccaratRound(shoe = createBaccaratShoe()) {
+  const playerCards = [drawBaccaratCard(shoe), drawBaccaratCard(shoe)];
+  const bankerCards = [drawBaccaratCard(shoe), drawBaccaratCard(shoe)];
+  let playerTotal = getBaccaratTotal(playerCards);
+  let bankerTotal = getBaccaratTotal(bankerCards);
+  let playerThirdCard = '';
+  let bankerThirdCard = '';
+
+  if (playerTotal < 8 && bankerTotal < 8) {
+    if (playerTotal <= 5) {
+      playerThirdCard = drawBaccaratCard(shoe);
+      playerCards.push(playerThirdCard);
+      playerTotal = getBaccaratTotal(playerCards);
+    }
+
+    if (playerThirdCard) {
+      const playerThirdValue = getBaccaratCardValue(playerThirdCard);
+
+      if (shouldBankerDraw(bankerTotal, playerThirdValue)) {
+        bankerThirdCard = drawBaccaratCard(shoe);
+        bankerCards.push(bankerThirdCard);
+        bankerTotal = getBaccaratTotal(bankerCards);
+      }
+    } else if (bankerTotal <= 5) {
+      bankerThirdCard = drawBaccaratCard(shoe);
+      bankerCards.push(bankerThirdCard);
+      bankerTotal = getBaccaratTotal(bankerCards);
+    }
+  }
+
+  const outcome = playerTotal > bankerTotal
+    ? 'PLAYER'
+    : bankerTotal > playerTotal
+      ? 'BANKER'
+      : 'TIE';
+
+  return {
+    playerCards,
+    bankerCards,
+    playerThirdCard,
+    bankerThirdCard,
+    playerTotal,
+    bankerTotal,
+    outcome,
+    remainingCards: shoe.length
+  };
+}
+
 function playBaccarat(player, color, bet, extra) {
   const side = String(extra.side || extra.pick || '').toUpperCase();
 
@@ -1977,6 +2236,220 @@ PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
 BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
 결과: ${state.outcome}
 판정: ${resultText}`;
+}
+
+function settlePvpBet(playerOne, playerTwo, color, bet, winnerKey) {
+  if (winnerKey === 'playerOne') {
+    playerOne[color] += bet;
+    playerTwo[color] -= bet;
+  } else if (winnerKey === 'playerTwo') {
+    playerOne[color] -= bet;
+    playerTwo[color] += bet;
+  }
+}
+
+function getPvpWinnerName(playerOne, playerTwo, winnerKey) {
+  if (winnerKey === 'playerOne') {
+    return playerOne.name;
+  }
+
+  if (winnerKey === 'playerTwo') {
+    return playerTwo.name;
+  }
+
+  return '무승부';
+}
+
+function getPvpPlayerName(playerId) {
+  return getPlayerById(playerId)?.name || `#${playerId}`;
+}
+
+function getRandomPvpTurn() {
+  return Math.random() < 0.5 ? 'playerOne' : 'playerTwo';
+}
+
+function getPvpSessionState(session) {
+  const playerOneName = getPvpPlayerName(session.playerOneId);
+  const playerTwoName = getPvpPlayerName(session.playerTwoId);
+  const activePlayerName = session.turn === 'playerTwo' ? playerTwoName : playerOneName;
+  const state = {
+    id: session.id,
+    gameType: session.gameType,
+    playerOne: { id: session.playerOneId, name: playerOneName },
+    playerTwo: { id: session.playerTwoId, name: playerTwoName },
+    color: session.color,
+    bet: session.bet,
+    playerOneCards: session.playerOneCards || [],
+    playerTwoCards: session.playerTwoCards || [],
+    playerOneAction: session.playerOneAction || '',
+    playerTwoAction: session.playerTwoAction || '',
+    turn: session.turn || 'playerOne',
+    activePlayerName,
+    done: session.done || false,
+    winnerKey: session.winnerKey || '',
+    winnerName: session.winnerKey ? getPvpWinnerName({ name: playerOneName }, { name: playerTwoName }, session.winnerKey) : '',
+    result: session.result || '',
+    remainingCards: session.gameType === 'pvpbaccarat'
+      ? (session.shoe || []).length
+      : (session.deck || []).length
+  };
+
+  if (session.gameType === 'pvpbaccarat') {
+    state.playerOneTotal = getBaccaratTotal(state.playerOneCards);
+    state.playerTwoTotal = getBaccaratTotal(state.playerTwoCards);
+    state.outcome = session.done
+      ? state.playerOneTotal > state.playerTwoTotal
+        ? 'PLAYER'
+        : state.playerTwoTotal > state.playerOneTotal
+          ? 'BANKER'
+          : 'TIE'
+      : '';
+  } else {
+    state.playerOneValue = getBlackjackHandValue(state.playerOneCards);
+    state.playerTwoValue = getBlackjackHandValue(state.playerTwoCards);
+  }
+
+  return state;
+}
+
+function getPvpWinnerKey(session) {
+  if (session.gameType === 'pvpbaccarat') {
+    const playerOneTotal = getBaccaratTotal(session.playerOneCards);
+    const playerTwoTotal = getBaccaratTotal(session.playerTwoCards);
+
+    if (playerOneTotal > playerTwoTotal) {
+      return 'playerOne';
+    }
+
+    if (playerTwoTotal > playerOneTotal) {
+      return 'playerTwo';
+    }
+
+    return 'tie';
+  }
+
+  return getPvpBlackjackWinnerKey(
+    getBlackjackHandValue(session.playerOneCards),
+    getBlackjackHandValue(session.playerTwoCards)
+  );
+}
+
+function finishPvpSession(playerOne, playerTwo, session) {
+  const winnerKey = getPvpWinnerKey(session);
+  settlePvpBet(playerOne, playerTwo, session.color, session.bet, winnerKey);
+  session.done = true;
+  session.winnerKey = winnerKey;
+  session.result = winnerKey === 'tie'
+    ? '무승부'
+    : `${getPvpWinnerName(playerOne, playerTwo, winnerKey)} 승리`;
+  return session.result;
+}
+
+function isPvpPlayerDone(session, key) {
+  return ['stand', 'bust', 'hit', 'natural'].includes(session[`${key}Action`]);
+}
+
+function advancePvpTurnOrFinish(playerOne, playerTwo, session) {
+  if (session.gameType === 'pvpbaccarat') {
+    if (!isPvpPlayerDone(session, 'playerOne')) {
+      session.turn = 'playerOne';
+      return '진행 중';
+    }
+
+    if (!isPvpPlayerDone(session, 'playerTwo')) {
+      session.turn = 'playerTwo';
+      return '진행 중';
+    }
+
+    return finishPvpSession(playerOne, playerTwo, session);
+  }
+
+  if (!isPvpPlayerDone(session, 'playerOne')) {
+    session.turn = 'playerOne';
+    return '진행 중';
+  }
+
+  if (!isPvpPlayerDone(session, 'playerTwo')) {
+    session.turn = 'playerTwo';
+    return '진행 중';
+  }
+
+  return finishPvpSession(playerOne, playerTwo, session);
+}
+
+function applyPvpAction(playerOne, playerTwo, session, action) {
+  const nextAction = String(action || '').toLowerCase();
+
+  if (!['hit', 'stand'].includes(nextAction)) {
+    throw createHttpError(400, '행동은 hit 또는 stand여야 합니다.');
+  }
+
+  if (session.done) {
+    throw createHttpError(400, '이미 종료된 PVP 게임입니다.');
+  }
+
+  const key = session.turn === 'playerTwo' ? 'playerTwo' : 'playerOne';
+  const cards = key === 'playerTwo' ? session.playerTwoCards : session.playerOneCards;
+
+  if (isPvpPlayerDone(session, key)) {
+    throw createHttpError(400, '이미 행동을 마친 플레이어입니다.');
+  }
+
+  if (nextAction === 'hit') {
+    if (session.gameType === 'pvpbaccarat') {
+      cards.push(drawBaccaratCard(session.shoe));
+      session[`${key}Action`] = 'hit';
+    } else {
+      cards.push(drawBlackjackCard(session.deck));
+      session[`${key}Action`] = getBlackjackHandValue(cards) > 21 ? 'bust' : '';
+    }
+  } else {
+    session[`${key}Action`] = 'stand';
+  }
+
+  return advancePvpTurnOrFinish(playerOne, playerTwo, session);
+}
+
+function makePvpLog(playerOne, playerTwo, session, resultText) {
+  const state = getPvpSessionState(session);
+  const title = session.gameType === 'pvpbaccarat' ? 'PVP 바카라' : 'PVP 블랙잭';
+  const valueLabel = session.gameType === 'pvpbaccarat' ? 'Total' : 'Value';
+  const playerOneValue = session.gameType === 'pvpbaccarat' ? state.playerOneTotal : state.playerOneValue;
+  const playerTwoValue = session.gameType === 'pvpbaccarat' ? state.playerTwoTotal : state.playerTwoValue;
+
+  return `${title}
+플레이어 1: ${playerOne.name}
+플레이어 2: ${playerTwo.name}
+베팅: ${session.color} ${session.bet}
+턴: ${state.done ? '-' : state.activePlayerName}
+${playerOne.name} 행동: ${state.playerOneAction || '-'}
+${playerTwo.name} 행동: ${state.playerTwoAction || '-'}
+${playerOne.name} 패: ${state.playerOneCards.join(', ')} (${valueLabel}: ${playerOneValue})
+${playerTwo.name} 패: ${state.playerTwoCards.join(', ')} (${valueLabel}: ${playerTwoValue})
+결과: ${resultText}
+승자: ${state.winnerName || '-'}
+${playerOne.name}: ${chipStr(playerOne)}
+${playerTwo.name}: ${chipStr(playerTwo)}`;
+}
+
+function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
+  const state = getPvpSessionState(session);
+  const title = session.gameType === 'pvpbaccarat' ? 'PVP 바카라' : 'PVP 블랙잭';
+  const valueLabel = session.gameType === 'pvpbaccarat' ? 'Total' : 'Value';
+  const playerOneValue = session.gameType === 'pvpbaccarat' ? state.playerOneTotal : state.playerOneValue;
+  const playerTwoValue = session.gameType === 'pvpbaccarat' ? state.playerTwoTotal : state.playerTwoValue;
+
+  return `${title}
+플레이어 1: ${playerOne.name}
+플레이어 2: ${playerTwo.name}
+베팅: ${session.color} ${session.bet}
+턴: ${state.done ? '-' : state.activePlayerName}
+${playerOne.name} 행동: ${state.playerOneAction || '-'}
+${playerTwo.name} 행동: ${state.playerTwoAction || '-'}
+${playerOne.name} 패: ${state.playerOneCards.join(', ')} (${valueLabel}: ${playerOneValue})
+${playerTwo.name} 패: ${state.playerTwoCards.join(', ')} (${valueLabel}: ${playerTwoValue})
+결과: ${resultText}
+승자: ${state.winnerName || '-'}`;
 }
 
 function playRedBlack(player, color, bet, extra) {
@@ -2286,6 +2759,68 @@ function makeBalancePublicLog(p) {
 잔고: ${chipStr(p)}`;
 }
 
+function formatFormulaHighLowRound(roundNumber) {
+  return Number.isFinite(roundNumber) && roundNumber > 0
+    ? `${roundNumber}라운드`
+    : '라운드 미입력';
+}
+
+function formatFormulaHighLowRevealRule(roundNumber) {
+  return Number.isFinite(roundNumber) && roundNumber >= 25
+    ? '하이/로우 선택 동시 공개'
+    : '하이/로우 선택 일반 공개';
+}
+
+function makeFormulaHighLowParticipantLines(participantEntries) {
+  return participantEntries
+    .map((entry) => `- ${entry.player.name} (#${entry.player.id}): ${entry.contribution}개`)
+    .join('\n');
+}
+
+function makeFormulaHighLowRecipientLine(recipientPlayers, share) {
+  return recipientPlayers
+    .map((player) => `${player.name} (#${player.id}) ${share}개`)
+    .join(', ');
+}
+
+function makeFormulaHighLowLog(settlement) {
+  const currentLines = settlement.changedPlayers
+    .map((player) => `- ${player.name}: ${chipStr(player)}`)
+    .join('\n');
+
+  return `수식 하이 로우 정산
+라운드: ${formatFormulaHighLowRound(settlement.roundNumber)}
+공개 규칙: ${formatFormulaHighLowRevealRule(settlement.roundNumber)}
+칩 색: ${settlement.color}
+총 팟: ${settlement.pot}개
+지급: ${makeFormulaHighLowRecipientLine(settlement.recipientPlayers, settlement.share)}
+버림: ${settlement.remainder}개
+
+참가/기여
+${makeFormulaHighLowParticipantLines(settlement.participantEntries)}
+
+결과 메모
+${settlement.memo || '-'}
+
+현재
+${currentLines}`;
+}
+
+function makeFormulaHighLowPublicLog(settlement) {
+  return `수식 하이 로우
+라운드: ${formatFormulaHighLowRound(settlement.roundNumber)}
+공개 규칙: ${formatFormulaHighLowRevealRule(settlement.roundNumber)}
+총 팟: ${settlement.color} ${settlement.pot}개
+지급: ${makeFormulaHighLowRecipientLine(settlement.recipientPlayers, settlement.share)}
+버림: ${settlement.remainder}개
+
+참가/기여
+${makeFormulaHighLowParticipantLines(settlement.participantEntries)}
+
+결과 메모
+${settlement.memo || '-'}`;
+}
+
 // =========================
 // 🌐 페이지 라우팅
 // =========================
@@ -2416,6 +2951,346 @@ app.post('/rates', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '칩 가치를 저장하지 못했습니다.' });
+  }
+});
+
+app.post('/formula-high-low/settle', async (req, res) => {
+  try {
+    const {
+      color,
+      roundNumber,
+      memo = ''
+    } = req.body;
+    const rawParticipantContributions = Array.isArray(req.body.participantContributions)
+      ? req.body.participantContributions
+      : Array.isArray(req.body.entries)
+        ? req.body.entries
+        : [];
+    const rawRecipientIds = Array.isArray(req.body.recipientIds)
+      ? req.body.recipientIds
+      : Array.isArray(req.body.recipients)
+        ? req.body.recipients
+        : [];
+
+    if (!validateColor(color)) {
+      return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
+    }
+
+    const participantEntries = rawParticipantContributions.map((entry) => ({
+      playerId: Number(entry?.playerId),
+      contribution: toChipAmount(entry?.contribution)
+    }));
+    const participantIds = participantEntries.map((entry) => entry.playerId);
+    const recipientIds = rawRecipientIds
+      .map((entry) => Number(typeof entry === 'object' ? entry?.playerId : entry));
+
+    if (participantEntries.length < 2) {
+      return res.status(400).json({ error: '수식 하이 로우는 참가자 2명 이상이 필요합니다.' });
+    }
+
+    if (participantEntries.some((entry) => !Number.isFinite(entry.playerId))) {
+      return res.status(400).json({ error: '참가자 선택이 올바르지 않습니다.' });
+    }
+
+    if (new Set(participantIds).size !== participantIds.length) {
+      return res.status(400).json({ error: '같은 참가자를 중복 선택할 수 없습니다.' });
+    }
+
+    if (participantEntries.some((entry) => !Number.isFinite(entry.contribution) || entry.contribution <= 0)) {
+      return res.status(400).json({ error: '참가자별 기여금은 1개 이상이어야 합니다.' });
+    }
+
+    if (!recipientIds.length) {
+      return res.status(400).json({ error: '팟을 받을 플레이어를 1명 이상 선택해야 합니다.' });
+    }
+
+    if (recipientIds.some((id) => !Number.isFinite(id))) {
+      return res.status(400).json({ error: '수령자 선택이 올바르지 않습니다.' });
+    }
+
+    if (new Set(recipientIds).size !== recipientIds.length) {
+      return res.status(400).json({ error: '같은 수령자를 중복 선택할 수 없습니다. 스윙 성공은 수령자 1명으로 입력하세요.' });
+    }
+
+    const participantIdSet = new Set(participantIds);
+
+    if (recipientIds.some((id) => !participantIdSet.has(id))) {
+      return res.status(400).json({ error: '수령자는 참가자 중에서 선택해야 합니다.' });
+    }
+
+    await loadPlayersByIds([...new Set([...participantIds, ...recipientIds])]);
+
+    const participantEntriesWithPlayers = participantEntries.map((entry) => ({
+      ...entry,
+      player: getPlayerById(entry.playerId)
+    }));
+    const recipientPlayers = recipientIds.map(getPlayerById);
+
+    if (participantEntriesWithPlayers.some((entry) => !entry.player) || recipientPlayers.some((player) => !player)) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    const shortPlayers = participantEntriesWithPlayers
+      .filter((entry) => entry.player[color] < entry.contribution)
+      .map((entry) => `${entry.player.name}: 보유 ${entry.player[color] || 0}개 / 필요 ${entry.contribution}개`);
+
+    if (shortPlayers.length) {
+      return res.status(400).json({ error: `보유 칩이 부족합니다.\n${shortPlayers.join('\n')}` });
+    }
+
+    const pot = participantEntriesWithPlayers.reduce((total, entry) => total + entry.contribution, 0);
+    const share = Math.floor(pot / recipientPlayers.length);
+    const remainder = pot % recipientPlayers.length;
+    const changedPlayersById = new Map();
+
+    participantEntriesWithPlayers.forEach((entry) => {
+      entry.player[color] -= entry.contribution;
+      changedPlayersById.set(entry.player.id, entry.player);
+    });
+
+    recipientPlayers.forEach((player) => {
+      player[color] += share;
+      changedPlayersById.set(player.id, player);
+    });
+
+    const changedPlayers = [...changedPlayersById.values()];
+    const parsedRoundNumber = toChipAmount(roundNumber);
+    const settlement = {
+      roundNumber: Number.isFinite(parsedRoundNumber) && parsedRoundNumber > 0 ? parsedRoundNumber : null,
+      color,
+      pot,
+      share,
+      remainder,
+      participantEntries: participantEntriesWithPlayers,
+      recipientPlayers,
+      changedPlayers,
+      memo: String(memo || '').trim()
+    };
+
+    const [log] = await Promise.all([
+      addLog(
+        'formulahighlow',
+        makeFormulaHighLowLog(settlement),
+        makeFormulaHighLowPublicLog(settlement)
+      ),
+      savePlayers(changedPlayers)
+    ]);
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({
+      ok: true,
+      pot,
+      share,
+      remainder,
+      log: log.text,
+      logs: [log],
+      players: serializePlayers(changedPlayers)
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 정산 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/pvp-baccarat/start', async (req, res) => {
+  try {
+    const { playerId, opponentId, color, amount } = req.body;
+    await loadPlayersByIds([playerId, opponentId]);
+    const playerOne = getPlayerById(playerId);
+    const playerTwo = getPlayerById(opponentId);
+    const bet = toChipAmount(amount);
+
+    if (!playerOne || !playerTwo) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    if (playerOne.id === playerTwo.id) {
+      return res.status(400).json({ error: '서로 다른 플레이어를 선택해야 합니다.' });
+    }
+
+    if (!validateColor(color)) {
+      return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
+    }
+
+    if (!Number.isFinite(bet) || bet <= 0) {
+      return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
+    }
+
+    if (playerOne[color] < bet || playerTwo[color] < bet) {
+      return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
+    }
+
+    assertGameLimitAvailable(playerOne, 'pvpbaccarat');
+    assertGameLimitAvailable(playerTwo, 'pvpbaccarat');
+
+    consumeGameLimit(playerOne, 'pvpbaccarat');
+    consumeGameLimit(playerTwo, 'pvpbaccarat');
+
+    const shoe = createBaccaratShoe();
+    const session = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      gameType: 'pvpbaccarat',
+      playerOneId: playerOne.id,
+      playerTwoId: playerTwo.id,
+      color,
+      bet,
+      shoe,
+      deck: [],
+      playerOneCards: [drawBaccaratCard(shoe), drawBaccaratCard(shoe)],
+      playerTwoCards: [drawBaccaratCard(shoe), drawBaccaratCard(shoe)],
+      playerOneAction: '',
+      playerTwoAction: '',
+      turn: getRandomPvpTurn(),
+      done: false,
+      winnerKey: '',
+      result: ''
+    };
+
+    const [log] = await Promise.all([
+      addLog(
+        'pvpbaccarat',
+        makePvpLog(playerOne, playerTwo, session, '진행 중'),
+        makePvpPublicLog(playerOne, playerTwo, session, '진행 중')
+      ),
+      savePvpSession(session),
+      savePlayers([playerOne, playerTwo])
+    ]);
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({ ok: true, state: getPvpSessionState(session), log: log.text, logs: [log], players: serializePlayers([playerOne, playerTwo]) });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || 'PVP 바카라 처리 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/pvp-blackjack/start', async (req, res) => {
+  try {
+    const { playerId, opponentId, color, amount } = req.body;
+    await loadPlayersByIds([playerId, opponentId]);
+    const playerOne = getPlayerById(playerId);
+    const playerTwo = getPlayerById(opponentId);
+    const bet = toChipAmount(amount);
+
+    if (!playerOne || !playerTwo) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    if (playerOne.id === playerTwo.id) {
+      return res.status(400).json({ error: '서로 다른 플레이어를 선택해야 합니다.' });
+    }
+
+    if (!validateColor(color)) {
+      return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
+    }
+
+    if (!Number.isFinite(bet) || bet <= 0) {
+      return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
+    }
+
+    if (playerOne[color] < bet || playerTwo[color] < bet) {
+      return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
+    }
+
+    assertGameLimitAvailable(playerOne, 'pvpblackjack');
+    assertGameLimitAvailable(playerTwo, 'pvpblackjack');
+
+    consumeGameLimit(playerOne, 'pvpblackjack');
+    consumeGameLimit(playerTwo, 'pvpblackjack');
+
+    const deck = createBlackjackDeck();
+    const session = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      gameType: 'pvpblackjack',
+      playerOneId: playerOne.id,
+      playerTwoId: playerTwo.id,
+      color,
+      bet,
+      deck,
+      shoe: [],
+      playerOneCards: [drawBlackjackCard(deck), drawBlackjackCard(deck)],
+      playerTwoCards: [drawBlackjackCard(deck), drawBlackjackCard(deck)],
+      playerOneAction: '',
+      playerTwoAction: '',
+      turn: getRandomPvpTurn(),
+      done: false,
+      winnerKey: '',
+      result: ''
+    };
+
+    const [log] = await Promise.all([
+      addLog(
+        'pvpblackjack',
+        makePvpLog(playerOne, playerTwo, session, '진행 중'),
+        makePvpPublicLog(playerOne, playerTwo, session, '진행 중')
+      ),
+      savePvpSession(session),
+      savePlayers([playerOne, playerTwo])
+    ]);
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({ ok: true, state: getPvpSessionState(session), log: log.text, logs: [log], players: serializePlayers([playerOne, playerTwo]) });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || 'PVP 블랙잭 처리 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/pvp/action', async (req, res) => {
+  try {
+    const { sessionId, action } = req.body;
+    const session = await getPvpSession(sessionId);
+
+    if (!session) {
+      return res.status(400).json({ error: '진행 중인 PVP 게임이 없습니다.' });
+    }
+
+    await loadPlayersByIds([session.playerOneId, session.playerTwoId]);
+    const playerOne = getPlayerById(session.playerOneId);
+    const playerTwo = getPlayerById(session.playerTwoId);
+
+    if (!playerOne || !playerTwo) {
+      await deletePvpSession(session.id);
+      return res.status(404).json({ error: '플레이어를 찾을 수 없어 세션을 종료했습니다.' });
+    }
+
+    const resultText = applyPvpAction(playerOne, playerTwo, session, action);
+    const persistence = session.done
+      ? deletePvpSession(session.id)
+      : savePvpSession(session);
+    const savePlayerPromise = session.done
+      ? savePlayers([playerOne, playerTwo])
+      : Promise.resolve();
+
+    const [log] = await Promise.all([
+      addLog(
+        session.gameType,
+        makePvpLog(playerOne, playerTwo, session, resultText),
+        makePvpPublicLog(playerOne, playerTwo, session, resultText)
+      ),
+      persistence,
+      savePlayerPromise
+    ]);
+
+    if (session.done) {
+      emitRealtime('update', players);
+    }
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({ ok: true, state: getPvpSessionState(session), log: log.text, logs: [log], players: serializePlayers([playerOne, playerTwo]) });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || 'PVP 진행 중 오류가 발생했습니다.' });
   }
 });
 

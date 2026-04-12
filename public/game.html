@@ -27,15 +27,18 @@
         <option value="roulette">Roulette</option>
         <option value="highlow">High Low</option>
         <option value="baccarat">Baccarat</option>
+        <option value="pvpbaccarat">PVP Baccarat</option>
         <option value="blackjack">Blackjack</option>
+        <option value="pvpblackjack">PVP Blackjack</option>
         <option value="redblack">Red Black</option>
         <option value="russianroulette">Russian Roulette</option>
+        <option value="formulahighlow">Formula High Low</option>
       </select>
     </div>
 
     <div class="form-row">
       <label>Chip color</label><br />
-      <select id="color" onchange="updateBalanceHint(); updateRussianRoulettePlayers();">
+      <select id="color" onchange="updateBalanceHint(); updateRussianRoulettePlayers(); updateFormulaHighLowPlayers();">
         <option value="red">Red</option>
         <option value="blue">Blue</option>
         <option value="green">Green</option>
@@ -125,6 +128,18 @@
       <button type="button" onclick="playGame()">Draw red/black</button>
     </div>
 
+    <div id="pvpFields" style="display:none;">
+      <div class="form-row">
+        <label>Opponent player</label><br />
+        <select id="pvpOpponentId" onchange="updateBalanceHint()"></select>
+      </div>
+
+      <button id="pvpStartButton" type="button" onclick="startPvpGame()">Start PVP</button>
+      <button id="pvpHitButton" type="button" onclick="pvpAction('hit')" disabled>Hit</button>
+      <button id="pvpStandButton" type="button" onclick="pvpAction('stand')" disabled>Stand</button>
+      <pre id="pvpState">No PVP game resolved.</pre>
+    </div>
+
     <div id="russianRouletteFields" style="display:none;">
       <div class="form-row">
         <label>Player count</label><br />
@@ -140,6 +155,44 @@
       <button type="button" onclick="startRussianRoulette()">Start Russian Roulette</button>
       <button id="russianTriggerButton" type="button" onclick="pullRussianRouletteTrigger()" disabled>Play round</button>
       <pre id="russianRouletteState">No Russian Roulette in progress.</pre>
+    </div>
+
+    <div id="formulaHighLowFields" style="display:none;">
+      <div class="form-row">
+        <label>Round number</label><br />
+        <input id="formulaRoundNumber" type="number" min="1" step="1" value="1" oninput="updateBalanceHint()" />
+      </div>
+
+      <div class="form-row">
+        <label>Player count</label><br />
+        <input id="formulaParticipantCount" type="number" min="2" step="1" value="2" oninput="updateFormulaHighLowPlayers()" />
+      </div>
+
+      <div class="form-row">
+        <label>Participants / contributions</label><br />
+        <div id="formulaParticipantInputs"></div>
+      </div>
+      <button type="button" onclick="applyFormulaContributionAmount()">Use bet amount for all</button>
+
+      <div class="form-row">
+        <label>Recipient count</label><br />
+        <input id="formulaRecipientCount" type="number" min="1" step="1" value="2" oninput="updateFormulaHighLowRecipients(); updateBalanceHint();" />
+      </div>
+
+      <div class="form-row">
+        <label>Pot recipients</label><br />
+        <div id="formulaRecipientInputs"></div>
+      </div>
+
+      <div class="form-row">
+        <label>Result memo</label><br />
+        <textarea id="formulaMemo" placeholder="하이/로우/스윙 선택, 히든 카드 공개, 수식, 결과값, 동점 판정 근거를 적어두세요."></textarea>
+      </div>
+
+      <div class="hint">Enter each player's actual pot contribution. Normal high/low winners: choose 2 recipients. Swing success or swing-fail 독식: choose 1 recipient. Remaining chips after equal split are discarded.</div>
+
+      <button type="button" onclick="settleFormulaHighLow()">Settle Formula High Low</button>
+      <pre id="formulaHighLowState">No Formula High Low settlement yet.</pre>
     </div>
 
     <div id="normalGameFields">
@@ -182,6 +235,7 @@
     let activeBlackjackPlayerId = null;
     let activeBaccaratPlayerId = null;
     let activeRussianRouletteSessionId = null;
+    let activePvpSessionId = null;
     const CHIP_LABELS = {
       red: 'Red',
       blue: 'Blue',
@@ -194,7 +248,10 @@
       highlow: 'High Low',
       baccarat: 'Baccarat',
       blackjack: 'Blackjack',
-      redblack: 'Red Black'
+      pvpbaccarat: 'PVP Baccarat',
+      pvpblackjack: 'PVP Blackjack',
+      redblack: 'Red Black',
+      formulahighlow: 'Formula High Low'
     };
 
     const logList = document.getElementById('logList');
@@ -206,6 +263,11 @@
     const baccaratStandButton = document.getElementById('baccaratStandButton');
     const russianRouletteStateBox = document.getElementById('russianRouletteState');
     const russianTriggerButton = document.getElementById('russianTriggerButton');
+    const pvpStateBox = document.getElementById('pvpState');
+    const pvpStartButton = document.getElementById('pvpStartButton');
+    const pvpHitButton = document.getElementById('pvpHitButton');
+    const pvpStandButton = document.getElementById('pvpStandButton');
+    const formulaHighLowStateBox = document.getElementById('formulaHighLowState');
     const balanceHint = document.getElementById('balanceHint');
 
     async function loadPlayers() {
@@ -214,6 +276,7 @@
 
       renderPlayerOptions();
       updateRussianRoulettePlayers();
+      updateFormulaHighLowPlayers();
       updateBalanceHint();
     }
 
@@ -235,12 +298,15 @@
 
       renderPlayerOptions();
       updateRussianRoulettePlayers();
+      updateFormulaHighLowPlayers();
       updateBalanceHint();
     }
 
     function renderPlayerOptions() {
       const select = document.getElementById('playerId');
+      const pvpSelect = document.getElementById('pvpOpponentId');
       const selectedValue = select.value;
+      const selectedPvpValue = pvpSelect.value;
 
       select.innerHTML = players
         .map((p) => `<option value="${p.id}">${formatPlayerOption(p)}</option>`)
@@ -248,6 +314,20 @@
 
       if (players.some((p) => String(p.id) === selectedValue)) {
         select.value = selectedValue;
+      }
+
+      pvpSelect.innerHTML = players
+        .map((p) => `<option value="${p.id}">${formatPlayerOption(p)}</option>`)
+        .join('');
+
+      if (players.some((p) => String(p.id) === selectedPvpValue) && selectedPvpValue !== select.value) {
+        pvpSelect.value = selectedPvpValue;
+      } else {
+        const nextOpponent = players.find((p) => String(p.id) !== select.value);
+
+        if (nextOpponent) {
+          pvpSelect.value = String(nextOpponent.id);
+        }
       }
     }
 
@@ -269,8 +349,20 @@
       return Math.floor(Number(player?.[color] || 0));
     }
 
+    function getLimitGameType(gameType) {
+      if (gameType === 'pvpbaccarat') {
+        return 'baccarat';
+      }
+
+      if (gameType === 'pvpblackjack') {
+        return 'blackjack';
+      }
+
+      return gameType;
+    }
+
     function getPlayerGameLimit(player, gameType) {
-      return player?.gameLimits?.[gameType];
+      return player?.gameLimits?.[getLimitGameType(gameType)];
     }
 
     function formatGameLimit(value) {
@@ -312,6 +404,16 @@
       return true;
     }
 
+    function validatePvpBet(playerId, opponentId, color, amount) {
+      if (Number(playerId) === Number(opponentId)) {
+        alert('Choose two different players.');
+        return false;
+      }
+
+      return validatePlayerBet(playerId, color, amount, 'Player 1') &&
+        validatePlayerBet(opponentId, color, amount, 'Player 2');
+    }
+
     function validateRussianRouletteBet(participantIds, color, amount) {
       const bet = getChipAmount(amount);
 
@@ -339,12 +441,262 @@
       return true;
     }
 
+    function getDefaultFormulaContribution() {
+      const bet = getChipAmount(document.getElementById('amount').value);
+      return Number.isFinite(bet) && bet > 0 ? bet : 1;
+    }
+
+    function getFormulaParticipantCount() {
+      const count = Math.floor(Number(document.getElementById('formulaParticipantCount').value));
+      return Number.isFinite(count) && count >= 2 ? count : 2;
+    }
+
+    function getFormulaRecipientCount() {
+      const count = Math.floor(Number(document.getElementById('formulaRecipientCount').value));
+      return Number.isFinite(count) && count >= 1 ? count : 1;
+    }
+
+    function getFormulaParticipantContributions() {
+      return [...document.querySelectorAll('.formula-participant-row')]
+        .map((row) => {
+          const select = row.querySelector('.formula-participant-select');
+          const input = row.querySelector('.formula-contribution-input');
+
+          return {
+            playerId: select?.value === '' ? NaN : Number(select?.value),
+            contribution: getChipAmount(input?.value)
+          };
+        });
+    }
+
+    function getFormulaRecipientIds() {
+      return [...document.querySelectorAll('.formula-recipient-select')]
+        .map((select) => (select.value === '' ? NaN : Number(select.value)))
+        .filter((id) => Number.isFinite(id));
+    }
+
+    function updateFormulaHighLowPlayers() {
+      const participantInputs = document.getElementById('formulaParticipantInputs');
+
+      if (!participantInputs) {
+        return;
+      }
+
+      const participantCount = getFormulaParticipantCount();
+      const previousEntries = getFormulaParticipantContributions();
+      const usedIds = new Set();
+
+      participantInputs.innerHTML = '';
+
+      for (let index = 0; index < participantCount; index += 1) {
+        let selectedId = previousEntries[index]?.playerId;
+        const previousContribution = previousEntries[index]?.contribution;
+        const contribution = Number.isFinite(previousContribution) && previousContribution > 0
+          ? previousContribution
+          : getDefaultFormulaContribution();
+
+        if (!players.some((p) => p.id === selectedId) || usedIds.has(selectedId)) {
+          selectedId = players.find((p) => !usedIds.has(p.id))?.id;
+        }
+
+        if (Number.isFinite(selectedId)) {
+          usedIds.add(selectedId);
+        }
+
+        const row = document.createElement('div');
+        const playerLabel = document.createElement('label');
+        const select = document.createElement('select');
+        const contributionLabel = document.createElement('label');
+        const contributionInput = document.createElement('input');
+
+        row.className = 'participant-row formula-participant-row';
+        playerLabel.textContent = `Player ${index + 1}`;
+        select.className = 'formula-participant-select';
+        select.onchange = () => {
+          updateFormulaHighLowRecipients();
+          updateBalanceHint();
+        };
+        select.innerHTML = '<option value="">Select player</option>' + players
+          .map((p) => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${formatPlayerOption(p)}</option>`)
+          .join('');
+        select.value = Number.isFinite(selectedId) ? String(selectedId) : '';
+
+        contributionLabel.textContent = 'Contribution';
+        contributionInput.className = 'formula-contribution-input';
+        contributionInput.type = 'number';
+        contributionInput.min = '1';
+        contributionInput.step = '1';
+        contributionInput.value = contribution;
+        contributionInput.oninput = updateBalanceHint;
+
+        row.append(playerLabel, select, contributionLabel, contributionInput);
+        participantInputs.appendChild(row);
+      }
+
+      updateFormulaHighLowRecipients();
+      updateBalanceHint();
+    }
+
+    function updateFormulaHighLowRecipients() {
+      const recipientInputs = document.getElementById('formulaRecipientInputs');
+
+      if (!recipientInputs) {
+        return;
+      }
+
+      const recipientCount = getFormulaRecipientCount();
+      const previousIds = getFormulaRecipientIds();
+      const participantIds = getFormulaParticipantContributions()
+        .map((entry) => entry.playerId)
+        .filter((id) => Number.isFinite(id));
+      const participantPlayers = participantIds
+        .map(getPlayerById)
+        .filter(Boolean);
+      const usedIds = new Set();
+
+      recipientInputs.innerHTML = '';
+
+      for (let index = 0; index < recipientCount; index += 1) {
+        let selectedId = previousIds[index];
+
+        if (!participantIds.includes(selectedId) || usedIds.has(selectedId)) {
+          selectedId = participantPlayers.find((p) => !usedIds.has(p.id))?.id;
+        }
+
+        if (Number.isFinite(selectedId)) {
+          usedIds.add(selectedId);
+        }
+
+        const row = document.createElement('div');
+        const label = document.createElement('label');
+        const select = document.createElement('select');
+
+        row.className = 'participant-row formula-recipient-row';
+        label.textContent = `Recipient ${index + 1}`;
+        select.className = 'formula-recipient-select';
+        select.onchange = updateBalanceHint;
+        select.innerHTML = '<option value="">Select recipient</option>' + participantPlayers
+          .map((p) => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${formatPlayerOption(p)}</option>`)
+          .join('');
+        select.value = Number.isFinite(selectedId) ? String(selectedId) : '';
+
+        row.append(label, select);
+        recipientInputs.appendChild(row);
+      }
+    }
+
+    function applyFormulaContributionAmount() {
+      const contribution = getDefaultFormulaContribution();
+
+      document.querySelectorAll('.formula-contribution-input')
+        .forEach((input) => {
+          input.value = contribution;
+        });
+
+      updateBalanceHint();
+    }
+
+    function validateFormulaHighLowSettlement(entries, recipientIds, color) {
+      if (entries.length < 2) {
+        alert('Choose at least 2 participants.');
+        return false;
+      }
+
+      if (entries.some((entry) => !Number.isFinite(entry.playerId))) {
+        alert('Choose every participant.');
+        return false;
+      }
+
+      const participantIds = entries.map((entry) => entry.playerId);
+
+      if (new Set(participantIds).size !== participantIds.length) {
+        alert('Choose different players for every participant slot.');
+        return false;
+      }
+
+      if (entries.some((entry) => !Number.isFinite(entry.contribution) || entry.contribution <= 0)) {
+        alert('Every contribution must be at least 1 chip.');
+        return false;
+      }
+
+      if (!recipientIds.length) {
+        alert('Choose at least 1 pot recipient.');
+        return false;
+      }
+
+      if (new Set(recipientIds).size !== recipientIds.length) {
+        alert('Choose each recipient once. For a swing success, use 1 recipient.');
+        return false;
+      }
+
+      const participantIdSet = new Set(participantIds);
+
+      if (recipientIds.some((id) => !participantIdSet.has(id))) {
+        alert('Recipients must be selected from the participants.');
+        return false;
+      }
+
+      const shortPlayers = entries
+        .map((entry) => ({ ...entry, player: getPlayerById(entry.playerId) }))
+        .filter((entry) => !entry.player || getChipBalance(entry.player, color) < entry.contribution)
+        .map((entry) => entry.player
+          ? `${entry.player.name}: ${CHIP_LABELS[color]} ${getChipBalance(entry.player, color)} / needs ${entry.contribution}`
+          : `#${entry.playerId}: missing`);
+
+      if (shortPlayers.length) {
+        alert(`Not enough chips.\n${shortPlayers.join('\n')}`);
+        return false;
+      }
+
+      return true;
+    }
+
     function updateBalanceHint() {
       const gameType = document.getElementById('gameType').value;
       const color = document.getElementById('color').value;
       const bet = getChipAmount(document.getElementById('amount').value);
 
       renderPlayerOptions();
+
+      if (gameType === 'pvpbaccarat' || gameType === 'pvpblackjack') {
+        const selectedPlayers = [
+          getPlayerById(document.getElementById('playerId').value),
+          getPlayerById(document.getElementById('pvpOpponentId').value)
+        ].filter(Boolean);
+        const rows = selectedPlayers.map((player) => {
+          const balance = getChipBalance(player, color);
+          const limit = formatGameLimit(getPlayerGameLimit(player, gameType));
+          const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
+          return `${player.name} ${balance}개 ${status} / plays ${limit}`;
+        });
+
+        balanceHint.textContent = rows.length
+          ? `PVP (${CHIP_LABELS[color]}): ${rows.join(' / ')}`
+          : '';
+        return;
+      }
+
+      if (gameType === 'formulahighlow') {
+        const entries = getFormulaParticipantContributions();
+        const pot = entries.reduce((total, entry) => total + (Number.isFinite(entry.contribution) ? entry.contribution : 0), 0);
+        const rows = entries
+          .map((entry) => ({ ...entry, player: getPlayerById(entry.playerId) }))
+          .filter((entry) => entry.player)
+          .map((entry) => {
+            const balance = getChipBalance(entry.player, color);
+            const status = Number.isFinite(entry.contribution) && entry.contribution > 0 && balance < entry.contribution ? '부족' : '가능';
+            return `${entry.player.name} ${entry.contribution || 0}개 ${status}`;
+          });
+        const recipientNames = getFormulaRecipientIds()
+          .map(getPlayerById)
+          .filter(Boolean)
+          .map((player) => player.name);
+
+        balanceHint.textContent = rows.length
+          ? `Formula High Low (${CHIP_LABELS[color]}): pot ${pot}개 / ${rows.join(' / ')} / recipients ${recipientNames.join(', ') || '-'}`
+          : '';
+        return;
+      }
 
       if (gameType === 'russianroulette') {
         const rows = getRussianRouletteParticipantIds()
@@ -508,16 +860,25 @@
       const isHighLow = gameType === 'highlow';
       const isBaccarat = gameType === 'baccarat';
       const isRedBlack = gameType === 'redblack';
+      const isPvpBaccarat = gameType === 'pvpbaccarat';
+      const isPvpBlackjack = gameType === 'pvpblackjack';
+      const isPvp = isPvpBaccarat || isPvpBlackjack;
       const isRussianRoulette = gameType === 'russianroulette';
+      const isFormulaHighLow = gameType === 'formulahighlow';
 
       document.getElementById('rouletteFields').style.display = isRoulette ? 'block' : 'none';
       document.getElementById('highLowFields').style.display = isHighLow ? 'block' : 'none';
       document.getElementById('baccaratFields').style.display = isBaccarat ? 'block' : 'none';
       document.getElementById('redBlackFields').style.display = isRedBlack ? 'block' : 'none';
+      document.getElementById('pvpFields').style.display = isPvp ? 'block' : 'none';
       document.getElementById('russianRouletteFields').style.display = isRussianRoulette ? 'block' : 'none';
-      document.getElementById('normalGameFields').style.display = isBlackjack || isRoulette || isHighLow || isBaccarat || isRedBlack || isRussianRoulette ? 'none' : 'block';
+      document.getElementById('formulaHighLowFields').style.display = isFormulaHighLow ? 'block' : 'none';
+      document.getElementById('normalGameFields').style.display = isBlackjack || isRoulette || isHighLow || isBaccarat || isRedBlack || isPvp || isRussianRoulette || isFormulaHighLow ? 'none' : 'block';
       document.getElementById('blackjackControls').style.display = isBlackjack ? 'block' : 'none';
-      document.getElementById('playerField').style.display = isRussianRoulette ? 'none' : 'block';
+      document.getElementById('playerField').style.display = isRussianRoulette || isFormulaHighLow ? 'none' : 'block';
+      pvpStartButton.textContent = isPvpBaccarat ? 'Start PVP Baccarat' : 'Start PVP Blackjack';
+      pvpHitButton.disabled = !activePvpSessionId;
+      pvpStandButton.disabled = !activePvpSessionId;
 
       if (isRoulette) {
         updateRouletteDetailInput();
@@ -525,6 +886,10 @@
 
       if (isRussianRoulette) {
         updateRussianRoulettePlayers();
+      }
+
+      if (isFormulaHighLow) {
+        updateFormulaHighLowPlayers();
       }
 
       updateBalanceHint();
@@ -626,6 +991,132 @@
       return selectWrap.style.display === 'none'
         ? document.getElementById('rouletteDetail').value
         : document.getElementById('rouletteDetailSelect').value;
+    }
+
+    async function startPvpGame() {
+      const gameType = document.getElementById('gameType').value;
+      const payload = {
+        ...getBasePayload(),
+        opponentId: Number(document.getElementById('pvpOpponentId').value)
+      };
+
+      if (!validatePvpBet(payload.playerId, payload.opponentId, payload.color, payload.amount)) {
+        return;
+      }
+
+      const res = await fetch(gameType === 'pvpbaccarat' ? '/api/pvp-baccarat/start' : '/api/pvp-blackjack/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to start PVP game.');
+        return;
+      }
+
+      activePvpSessionId = data.state.id;
+      renderPvpState(data.state);
+      renderLogs(data.logs);
+      mergePlayers(data.players);
+    }
+
+    async function pvpAction(action) {
+      const res = await fetch('/api/pvp/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activePvpSessionId, action })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to progress PVP game.');
+        return;
+      }
+
+      renderPvpState(data.state);
+      renderLogs(data.logs);
+      mergePlayers(data.players);
+
+      if (data.state.done) {
+        activePvpSessionId = null;
+        alert(data.state.result);
+      }
+    }
+
+    function renderPvpState(state) {
+      if (state.gameType === 'pvpbaccarat') {
+        pvpStateBox.textContent = `PVP Baccarat
+PLAYER: ${state.playerOne.name}
+BANKER: ${state.playerTwo.name}
+Bet: ${state.color} ${state.bet}
+Turn: ${state.done ? '-' : state.activePlayerName}
+PLAYER action: ${state.playerOneAction || '-'}
+BANKER action: ${state.playerTwoAction || '-'}
+PLAYER cards: ${state.playerOneCards.join(', ')} (${state.playerOneTotal})
+BANKER cards: ${state.playerTwoCards.join(', ')} (${state.playerTwoTotal})
+Result: ${state.result || 'in progress'}
+Winner: ${state.winnerName || '-'}`;
+        pvpHitButton.disabled = state.done;
+        pvpStandButton.disabled = state.done;
+        return;
+      }
+
+      pvpStateBox.textContent = `PVP Blackjack
+Player 1: ${state.playerOne.name}
+Player 2: ${state.playerTwo.name}
+Bet: ${state.color} ${state.bet}
+Turn: ${state.done ? '-' : state.activePlayerName}
+${state.playerOne.name} action: ${state.playerOneAction || '-'}
+${state.playerTwo.name} action: ${state.playerTwoAction || '-'}
+${state.playerOne.name}: ${state.playerOneCards.join(', ')} (${state.playerOneValue})
+${state.playerTwo.name}: ${state.playerTwoCards.join(', ')} (${state.playerTwoValue})
+Result: ${state.result || 'in progress'}
+Winner: ${state.winnerName || '-'}`;
+      pvpHitButton.disabled = state.done;
+      pvpStandButton.disabled = state.done;
+    }
+
+    async function settleFormulaHighLow() {
+      const color = document.getElementById('color').value;
+      const entries = getFormulaParticipantContributions();
+      const recipientIds = getFormulaRecipientIds();
+
+      if (!validateFormulaHighLowSettlement(entries, recipientIds, color)) {
+        return;
+      }
+
+      const res = await fetch('/api/formula-high-low/settle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          color,
+          roundNumber: Number(document.getElementById('formulaRoundNumber').value),
+          participantContributions: entries,
+          recipientIds,
+          memo: document.getElementById('formulaMemo').value
+        })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to settle Formula High Low.');
+        return;
+      }
+
+      renderLogs(data.logs);
+      mergePlayers(data.players);
+
+      formulaHighLowStateBox.textContent = `Formula High Low settled
+Pot: ${color} ${data.pot}
+Recipients: ${recipientIds.length}
+Paid each: ${data.share}
+Discarded: ${data.remainder}`;
+      alert(`Formula High Low settled. Paid ${data.share} each, discarded ${data.remainder}.`);
     }
 
     async function startRussianRoulette() {
