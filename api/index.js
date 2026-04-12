@@ -32,10 +32,12 @@ let blackjackSessionSheetReady = false;
 let baccaratSessionSheetReady = false;
 let russianRouletteSessionSheetReady = false;
 let pvpSessionSheetReady = false;
+let formulaHighLowSessionSheetReady = false;
 let blackjackSessions = new Map();
 let baccaratSessions = new Map();
 let russianRouletteSessions = new Map();
 let pvpSessions = new Map();
+let formulaHighLowSessions = new Map();
 const COLORS = ['red', 'blue', 'green', 'yellow', 'white'];
 const CHIP_LABELS = {
   red: 'Red',
@@ -214,6 +216,27 @@ const PVP_SESSION_HEADER = [
   'playerTwoAction',
   'turn',
   'done',
+  'winnerKey',
+  'result',
+  'updatedAt'
+];
+const FORMULA_HIGH_LOW_SESSION_SHEET_NAME = '수식하이로우세션';
+const FORMULA_HIGH_LOW_SESSION_SHEET_REF = `'${FORMULA_HIGH_LOW_SESSION_SHEET_NAME}'`;
+const FORMULA_HIGH_LOW_SESSION_HEADER_RANGE = `${FORMULA_HIGH_LOW_SESSION_SHEET_REF}!A1:N1`;
+const FORMULA_HIGH_LOW_SESSION_RANGE = `${FORMULA_HIGH_LOW_SESSION_SHEET_REF}!A:N`;
+const FORMULA_HIGH_LOW_SESSION_ID_RANGE = `${FORMULA_HIGH_LOW_SESSION_SHEET_REF}!A:A`;
+const FORMULA_HIGH_LOW_SESSION_HEADER = [
+  'id',
+  'playerOneId',
+  'playerTwoId',
+  'color',
+  'bet',
+  'roundNumber',
+  'deck',
+  'discardedCards',
+  'playerOneState',
+  'playerTwoState',
+  'stage',
   'winnerKey',
   'result',
   'updatedAt'
@@ -705,6 +728,15 @@ function parseJsonArray(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
     return [];
+  }
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    return {};
   }
 }
 
@@ -1322,6 +1354,144 @@ async function deletePvpSession(sessionId) {
   }
 
   pvpSessions.delete(String(sessionId));
+}
+
+async function ensureFormulaHighLowSessionSheetHeader() {
+  if (formulaHighLowSessionSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === FORMULA_HIGH_LOW_SESSION_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: FORMULA_HIGH_LOW_SESSION_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: FORMULA_HIGH_LOW_SESSION_HEADER_RANGE
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  const hasHeader = FORMULA_HIGH_LOW_SESSION_HEADER.every((name, index) => header[index] === name);
+
+  if (!hasHeader) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: FORMULA_HIGH_LOW_SESSION_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [FORMULA_HIGH_LOW_SESSION_HEADER] }
+    });
+  }
+
+  formulaHighLowSessionSheetReady = true;
+}
+
+function parseFormulaHighLowSessionRow(row) {
+  return {
+    id: row[0] || '',
+    playerOneId: Number(row[1]),
+    playerTwoId: Number(row[2]),
+    color: row[3] || '',
+    bet: toChipAmount(row[4]),
+    roundNumber: readGameLimitValue(row[5]),
+    deck: parseJsonArray(row[6]),
+    discardedCards: parseJsonArray(row[7]),
+    playerOneState: parseJsonObject(row[8]),
+    playerTwoState: parseJsonObject(row[9]),
+    stage: row[10] || 'initial',
+    winnerKey: row[11] || '',
+    result: row[12] || ''
+  };
+}
+
+function formulaHighLowSessionToRow(session) {
+  return [
+    session.id,
+    session.playerOneId,
+    session.playerTwoId,
+    session.color,
+    session.bet,
+    Number.isFinite(Number(session.roundNumber)) ? session.roundNumber : '',
+    JSON.stringify(session.deck || []),
+    JSON.stringify(session.discardedCards || []),
+    JSON.stringify(session.playerOneState || {}),
+    JSON.stringify(session.playerTwoState || {}),
+    session.stage || '',
+    session.winnerKey || '',
+    session.result || '',
+    new Date().toISOString()
+  ];
+}
+
+async function getFormulaHighLowSessionRowNumber(sessionId) {
+  await ensureFormulaHighLowSessionSheetHeader();
+  return findRowNumberByFirstColumnText(FORMULA_HIGH_LOW_SESSION_ID_RANGE, sessionId);
+}
+
+async function getFormulaHighLowSession(sessionId) {
+  const rowNumber = await getFormulaHighLowSessionRowNumber(sessionId);
+
+  if (!rowNumber) {
+    formulaHighLowSessions.delete(String(sessionId));
+    return null;
+  }
+
+  const row = await readSingleRow(sheetRowRange(FORMULA_HIGH_LOW_SESSION_SHEET_REF, 'N', rowNumber));
+  const session = parseFormulaHighLowSessionRow(row);
+
+  if (!session.id) {
+    formulaHighLowSessions.delete(String(sessionId));
+    return null;
+  }
+
+  withSessionRowNumber(session, rowNumber);
+  formulaHighLowSessions.set(String(session.id), session);
+  return session;
+}
+
+async function saveFormulaHighLowSession(session) {
+  let rowNumber = session._rowNumber || await getFormulaHighLowSessionRowNumber(session.id);
+  const row = formulaHighLowSessionToRow(session);
+
+  if (rowNumber) {
+    await updateSingleRow(sheetRowRange(FORMULA_HIGH_LOW_SESSION_SHEET_REF, 'N', rowNumber), row);
+  } else {
+    const updatedRange = await appendSingleRow(FORMULA_HIGH_LOW_SESSION_RANGE, row);
+    rowNumber = getRowNumberFromRange(updatedRange);
+  }
+
+  if (rowNumber) {
+    withSessionRowNumber(session, rowNumber);
+  }
+  formulaHighLowSessions.set(String(session.id), session);
+}
+
+async function deleteFormulaHighLowSession(sessionId) {
+  const cachedSession = formulaHighLowSessions.get(String(sessionId));
+  const rowNumber = cachedSession?._rowNumber || await getFormulaHighLowSessionRowNumber(sessionId);
+
+  if (rowNumber) {
+    await clearSingleRow(sheetRowRange(FORMULA_HIGH_LOW_SESSION_SHEET_REF, 'N', rowNumber));
+  }
+
+  formulaHighLowSessions.delete(String(sessionId));
 }
 
 function parseLogRow(row) {
@@ -2763,6 +2933,656 @@ function makeBalancePublicLog(p) {
 잔고: ${chipStr(p)}`;
 }
 
+const FORMULA_CARD_SUITS = [
+  { key: 'gold', label: '금', rank: 4 },
+  { key: 'silver', label: '은', rank: 3 },
+  { key: 'bronze', label: '동', rank: 2 },
+  { key: 'black', label: '흑', rank: 1 }
+];
+const FORMULA_CARD_SUIT_RANK = Object.fromEntries(FORMULA_CARD_SUITS.map((suit) => [suit.key, suit.rank]));
+const FORMULA_CARD_SUIT_LABEL = Object.fromEntries(FORMULA_CARD_SUITS.map((suit) => [suit.key, suit.label]));
+const FORMULA_OPERATOR_LABELS = {
+  '+': '+',
+  '-': '-',
+  '*': '×',
+  '/': '÷'
+};
+const FORMULA_CHOICES = ['HIGH', 'LOW', 'SWING'];
+const FORMULA_EPSILON = 1e-9;
+
+function createFormulaHighLowDeck() {
+  const numberCards = FORMULA_CARD_SUITS.flatMap((suit) =>
+    Array.from({ length: 11 }, (_, value) => ({
+      kind: 'number',
+      suit: suit.key,
+      value,
+      id: `${suit.key}-${value}`
+    }))
+  );
+  const rootCards = Array.from({ length: 4 }, (_, index) => ({
+    kind: 'root',
+    id: `root-${index + 1}`
+  }));
+  const multiplyCards = Array.from({ length: 4 }, (_, index) => ({
+    kind: 'multiply',
+    id: `multiply-${index + 1}`
+  }));
+
+  return [...numberCards, ...rootCards, ...multiplyCards];
+}
+
+function drawFormulaCard(deck) {
+  if (!deck.length) {
+    throw createHttpError(400, '수식 하이 로우 덱에 남은 카드가 없습니다.');
+  }
+
+  const index = Math.floor(Math.random() * deck.length);
+  const [card] = deck.splice(index, 1);
+  return card;
+}
+
+function isFormulaNumberCard(card) {
+  return card?.kind === 'number';
+}
+
+function drawFormulaNumberCard(deck, discardedCards) {
+  while (deck.length) {
+    const card = drawFormulaCard(deck);
+
+    if (isFormulaNumberCard(card)) {
+      return card;
+    }
+
+    discardedCards.push(card);
+  }
+
+  throw createHttpError(400, '추가 드로우에서 숫자 카드를 찾지 못했습니다.');
+}
+
+function drawFormulaHiddenCard(deck, discardedCards) {
+  return drawFormulaNumberCard(deck, discardedCards);
+}
+
+function drawFormulaOpenSlot(deck, discardedCards) {
+  const card = drawFormulaCard(deck);
+
+  if (isFormulaNumberCard(card)) {
+    return { symbol: null, number: card };
+  }
+
+  if (card.kind === 'root' || card.kind === 'multiply') {
+    return {
+      symbol: card,
+      number: drawFormulaNumberCard(deck, discardedCards)
+    };
+  }
+
+  discardedCards.push(card);
+  return drawFormulaOpenSlot(deck, discardedCards);
+}
+
+function createFormulaPlayerState(deck, discardedCards) {
+  return {
+    hidden: drawFormulaHiddenCard(deck, discardedCards),
+    openSlots: [
+      drawFormulaOpenSlot(deck, discardedCards),
+      drawFormulaOpenSlot(deck, discardedCards)
+    ]
+  };
+}
+
+function dealFormulaFinalOpenSlot(playerState, deck, discardedCards) {
+  if ((playerState.openSlots || []).length >= 3) {
+    throw createHttpError(400, '이미 최종 오픈 카드를 받았습니다.');
+  }
+
+  playerState.openSlots = [...(playerState.openSlots || []), drawFormulaOpenSlot(deck, discardedCards)];
+}
+
+function formatFormulaCard(card) {
+  if (!card) {
+    return '-';
+  }
+
+  if (card.kind === 'number') {
+    return `${FORMULA_CARD_SUIT_LABEL[card.suit] || card.suit}${card.value}`;
+  }
+
+  if (card.kind === 'root') {
+    return '√';
+  }
+
+  if (card.kind === 'multiply') {
+    return '×';
+  }
+
+  return card.id || String(card);
+}
+
+function formatFormulaOpenSlot(slot) {
+  if (!slot) {
+    return '-';
+  }
+
+  if (slot.symbol) {
+    return `${formatFormulaCard(slot.symbol)} ${formatFormulaCard(slot.number)}`;
+  }
+
+  return formatFormulaCard(slot.number);
+}
+
+function getFormulaNumbers(playerState) {
+  return [
+    playerState.hidden,
+    ...(playerState.openSlots || []).map((slot) => slot.number)
+  ].filter(isFormulaNumberCard);
+}
+
+function getFormulaRootCount(playerState) {
+  return (playerState.openSlots || []).filter((slot) => slot.symbol?.kind === 'root').length;
+}
+
+function getFormulaMultiplyCount(playerState) {
+  return (playerState.openSlots || []).filter((slot) => slot.symbol?.kind === 'multiply').length;
+}
+
+function uniqueFormulaPermutations(items) {
+  const results = [];
+  const used = Array(items.length).fill(false);
+  const seen = new Set();
+
+  function visit(path) {
+    if (path.length === items.length) {
+      const key = path.join('|');
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push(path.map((index) => items[index]));
+      }
+
+      return;
+    }
+
+    for (let index = 0; index < items.length; index += 1) {
+      if (!used[index]) {
+        used[index] = true;
+        path.push(index);
+        visit(path);
+        path.pop();
+        used[index] = false;
+      }
+    }
+  }
+
+  visit([]);
+  return results;
+}
+
+function getFormulaRootAssignments(numberCount, rootCount) {
+  if (rootCount <= 0) {
+    return [[]];
+  }
+
+  const assignments = [];
+
+  function visit(startIndex, selected) {
+    if (selected.length === rootCount) {
+      assignments.push([...selected]);
+      return;
+    }
+
+    for (let index = startIndex; index < numberCount; index += 1) {
+      selected.push(index);
+      visit(index + 1, selected);
+      selected.pop();
+    }
+  }
+
+  visit(0, []);
+  return assignments;
+}
+
+function uniqueFormulaOperatorSets(sets) {
+  const seen = new Set();
+
+  return sets.filter((set) => {
+    const key = [...set].sort().join('');
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getFormulaOperatorSets(multiplyCount) {
+  let sets = [['+', '-', '/']];
+
+  for (let count = 0; count < multiplyCount; count += 1) {
+    const nextSets = [];
+
+    sets.forEach((set) => {
+      const expanded = [...set, '*'];
+
+      expanded.forEach((operator, index) => {
+        if (['+', '-', '*'].includes(operator)) {
+          nextSets.push(expanded.filter((_, candidateIndex) => candidateIndex !== index));
+        }
+      });
+    });
+
+    sets = uniqueFormulaOperatorSets(nextSets);
+  }
+
+  return sets;
+}
+
+function applyFormulaOperator(left, operator, right) {
+  if (operator === '+') {
+    return left + right;
+  }
+
+  if (operator === '-') {
+    return left - right;
+  }
+
+  if (operator === '*') {
+    return left * right;
+  }
+
+  if (operator === '/') {
+    return Math.abs(right) < FORMULA_EPSILON ? null : left / right;
+  }
+
+  return null;
+}
+
+function formatFormulaValue(value) {
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+
+  const rounded = Math.round(value * 10000) / 10000;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function makeFormulaOperand(card, useRoot) {
+  const label = formatFormulaCard(card);
+
+  return {
+    value: useRoot ? Math.sqrt(card.value) : card.value,
+    expression: useRoot ? `√(${label})` : label,
+    card
+  };
+}
+
+function makeFormulaNode(value, expression) {
+  return Number.isFinite(value) ? { value, expression } : null;
+}
+
+function combineFormulaNodes(left, operator, right) {
+  const value = applyFormulaOperator(left.value, operator, right.value);
+
+  if (value === null || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return makeFormulaNode(value, `(${left.expression} ${FORMULA_OPERATOR_LABELS[operator]} ${right.expression})`);
+}
+
+function evaluateFormulaShapes(operands, operators) {
+  const [a, b, c, d] = operands;
+  const [op1, op2, op3] = operators;
+  const results = [];
+  const ab = combineFormulaNodes(a, op1, b);
+  const bc = combineFormulaNodes(b, op2, c);
+  const cd = combineFormulaNodes(c, op3, d);
+
+  if (ab) {
+    const abc = combineFormulaNodes(ab, op2, c);
+
+    if (abc) {
+      const abcd = combineFormulaNodes(abc, op3, d);
+
+      if (abcd) {
+        results.push(abcd);
+      }
+    }
+  }
+
+  if (bc) {
+    const abc = combineFormulaNodes(a, op1, bc);
+
+    if (abc) {
+      const abcd = combineFormulaNodes(abc, op3, d);
+
+      if (abcd) {
+        results.push(abcd);
+      }
+    }
+  }
+
+  if (bc) {
+    const bcd = combineFormulaNodes(bc, op3, d);
+
+    if (bcd) {
+      const abcd = combineFormulaNodes(a, op1, bcd);
+
+      if (abcd) {
+        results.push(abcd);
+      }
+    }
+  }
+
+  if (cd) {
+    const bcd = combineFormulaNodes(b, op2, cd);
+
+    if (bcd) {
+      const abcd = combineFormulaNodes(a, op1, bcd);
+
+      if (abcd) {
+        results.push(abcd);
+      }
+    }
+  }
+
+  if (ab && cd) {
+    const abcd = combineFormulaNodes(ab, op2, cd);
+
+    if (abcd) {
+      results.push(abcd);
+    }
+  }
+
+  return results;
+}
+
+function getFormulaTieCard(playerState, side) {
+  const cards = getFormulaNumbers(playerState);
+
+  return cards.reduce((best, card) => {
+    if (!best) {
+      return card;
+    }
+
+    if (side === 'HIGH') {
+      if (card.value !== best.value) {
+        return card.value > best.value ? card : best;
+      }
+
+      return FORMULA_CARD_SUIT_RANK[card.suit] > FORMULA_CARD_SUIT_RANK[best.suit] ? card : best;
+    }
+
+    if (card.value !== best.value) {
+      return card.value < best.value ? card : best;
+    }
+
+    return FORMULA_CARD_SUIT_RANK[card.suit] < FORMULA_CARD_SUIT_RANK[best.suit] ? card : best;
+  }, null);
+}
+
+function findBestFormulaForTarget(playerState, target) {
+  const numbers = getFormulaNumbers(playerState);
+  const rootCount = getFormulaRootCount(playerState);
+  const operatorSets = getFormulaOperatorSets(getFormulaMultiplyCount(playerState));
+  let best = null;
+
+  if (numbers.length !== 4) {
+    return null;
+  }
+
+  getFormulaRootAssignments(numbers.length, rootCount).forEach((rootIndexes) => {
+    const rootIndexSet = new Set(rootIndexes);
+    const operands = numbers.map((card, index) => makeFormulaOperand(card, rootIndexSet.has(index)));
+
+    uniqueFormulaPermutations(operands).forEach((operandPermutation) => {
+      operatorSets.forEach((operatorSet) => {
+        uniqueFormulaPermutations(operatorSet).forEach((operatorPermutation) => {
+          evaluateFormulaShapes(operandPermutation, operatorPermutation).forEach((candidate) => {
+            const distance = Math.abs(candidate.value - target);
+
+            if (
+              !best ||
+              distance < best.distance - FORMULA_EPSILON ||
+              (Math.abs(distance - best.distance) <= FORMULA_EPSILON && candidate.expression.length < best.expression.length)
+            ) {
+              best = {
+                ...candidate,
+                target,
+                distance,
+                valueText: formatFormulaValue(candidate.value),
+                distanceText: formatFormulaValue(distance)
+              };
+            }
+          });
+        });
+      });
+    });
+  });
+
+  return best;
+}
+
+function evaluateFormulaPlayerState(playerState) {
+  return {
+    high: findBestFormulaForTarget(playerState, 20),
+    low: findBestFormulaForTarget(playerState, 1),
+    highTieCard: getFormulaTieCard(playerState, 'HIGH'),
+    lowTieCard: getFormulaTieCard(playerState, 'LOW')
+  };
+}
+
+function compareFormulaSide(playerOneEval, playerTwoEval, side) {
+  const key = side === 'HIGH' ? 'high' : 'low';
+  const first = playerOneEval[key];
+  const second = playerTwoEval[key];
+
+  if (!first || !second) {
+    return first ? 'playerOne' : second ? 'playerTwo' : 'tie';
+  }
+
+  if (first.distance < second.distance - FORMULA_EPSILON) {
+    return 'playerOne';
+  }
+
+  if (second.distance < first.distance - FORMULA_EPSILON) {
+    return 'playerTwo';
+  }
+
+  const firstTieCard = side === 'HIGH' ? playerOneEval.highTieCard : playerOneEval.lowTieCard;
+  const secondTieCard = side === 'HIGH' ? playerTwoEval.highTieCard : playerTwoEval.lowTieCard;
+
+  if (!firstTieCard || !secondTieCard) {
+    return 'tie';
+  }
+
+  if (side === 'HIGH') {
+    if (firstTieCard.value !== secondTieCard.value) {
+      return firstTieCard.value > secondTieCard.value ? 'playerOne' : 'playerTwo';
+    }
+
+    if (FORMULA_CARD_SUIT_RANK[firstTieCard.suit] !== FORMULA_CARD_SUIT_RANK[secondTieCard.suit]) {
+      return FORMULA_CARD_SUIT_RANK[firstTieCard.suit] > FORMULA_CARD_SUIT_RANK[secondTieCard.suit] ? 'playerOne' : 'playerTwo';
+    }
+  } else {
+    if (firstTieCard.value !== secondTieCard.value) {
+      return firstTieCard.value < secondTieCard.value ? 'playerOne' : 'playerTwo';
+    }
+
+    if (FORMULA_CARD_SUIT_RANK[firstTieCard.suit] !== FORMULA_CARD_SUIT_RANK[secondTieCard.suit]) {
+      return FORMULA_CARD_SUIT_RANK[firstTieCard.suit] < FORMULA_CARD_SUIT_RANK[secondTieCard.suit] ? 'playerOne' : 'playerTwo';
+    }
+  }
+
+  return 'tie';
+}
+
+function normalizeFormulaChoice(choice) {
+  const normalized = String(choice || '').trim().toUpperCase();
+
+  if (!FORMULA_CHOICES.includes(normalized)) {
+    throw createHttpError(400, '수식 하이 로우 선택은 HIGH, LOW, SWING 중 하나여야 합니다.');
+  }
+
+  return normalized;
+}
+
+function getFormulaEligibleSideWinner(evaluation, choices, side) {
+  const eligible = ['playerOne', 'playerTwo'].filter((key) => (
+    choices[key] === side || choices[key] === 'SWING'
+  ));
+
+  if (eligible.length === 1) {
+    return eligible[0];
+  }
+
+  if (eligible.length === 2) {
+    return compareFormulaSide(evaluation.playerOne, evaluation.playerTwo, side);
+  }
+
+  return 'tie';
+}
+
+function getFormulaOverallWinner(evaluation, choices) {
+  const highWinner = getFormulaEligibleSideWinner(evaluation, choices, 'HIGH');
+  const lowWinner = getFormulaEligibleSideWinner(evaluation, choices, 'LOW');
+  const playerOneSwing = choices.playerOne === 'SWING';
+  const playerTwoSwing = choices.playerTwo === 'SWING';
+
+  if (playerOneSwing && playerTwoSwing) {
+    if (highWinner === 'playerOne' && lowWinner === 'playerOne') {
+      return { winnerKey: 'playerOne', highWinner, lowWinner };
+    }
+
+    if (highWinner === 'playerTwo' && lowWinner === 'playerTwo') {
+      return { winnerKey: 'playerTwo', highWinner, lowWinner };
+    }
+
+    return { winnerKey: 'tie', highWinner, lowWinner };
+  }
+
+  if (playerOneSwing) {
+    return {
+      winnerKey: highWinner === 'playerOne' && lowWinner === 'playerOne' ? 'playerOne' : 'playerTwo',
+      highWinner,
+      lowWinner
+    };
+  }
+
+  if (playerTwoSwing) {
+    return {
+      winnerKey: highWinner === 'playerTwo' && lowWinner === 'playerTwo' ? 'playerTwo' : 'playerOne',
+      highWinner,
+      lowWinner
+    };
+  }
+
+  if (choices.playerOne !== choices.playerTwo) {
+    return { winnerKey: 'tie', highWinner, lowWinner };
+  }
+
+  return {
+    winnerKey: choices.playerOne === 'HIGH' ? highWinner : lowWinner,
+    highWinner,
+    lowWinner
+  };
+}
+
+function getFormulaWinnerName(playerOne, playerTwo, winnerKey) {
+  if (winnerKey === 'playerOne') {
+    return playerOne.name;
+  }
+
+  if (winnerKey === 'playerTwo') {
+    return playerTwo.name;
+  }
+
+  return '무승부 / 팟 분배';
+}
+
+function getFormulaPlayerStateSummary(playerState, revealHidden = false) {
+  return {
+    hidden: revealHidden ? formatFormulaCard(playerState.hidden) : 'hidden',
+    openSlots: (playerState.openSlots || []).map(formatFormulaOpenSlot),
+    numbers: getFormulaNumbers(playerState).map(formatFormulaCard),
+    rootCount: getFormulaRootCount(playerState),
+    multiplyCount: getFormulaMultiplyCount(playerState)
+  };
+}
+
+function getFormulaEvaluationSummary(playerEval) {
+  if (!playerEval) {
+    return null;
+  }
+
+  return {
+    high: playerEval.high ? {
+      expression: playerEval.high.expression,
+      value: playerEval.high.valueText,
+      distance: playerEval.high.distanceText
+    } : null,
+    low: playerEval.low ? {
+      expression: playerEval.low.expression,
+      value: playerEval.low.valueText,
+      distance: playerEval.low.distanceText
+    } : null,
+    highTieCard: formatFormulaCard(playerEval.highTieCard),
+    lowTieCard: formatFormulaCard(playerEval.lowTieCard)
+  };
+}
+
+function getFormulaHighLowSessionState(session, options = {}) {
+  const revealHidden = Boolean(options.revealHidden);
+  const evaluation = options.evaluation || null;
+  const playerOneName = getPvpPlayerName(session.playerOneId);
+  const playerTwoName = getPvpPlayerName(session.playerTwoId);
+
+  return {
+    id: session.id,
+    playerOne: { id: session.playerOneId, name: playerOneName },
+    playerTwo: { id: session.playerTwoId, name: playerTwoName },
+    color: session.color,
+    bet: session.bet,
+    pot: session.bet * 2,
+    roundNumber: session.roundNumber,
+    stage: session.stage,
+    winnerKey: session.winnerKey || '',
+    winnerName: session.winnerKey ? getFormulaWinnerName({ name: playerOneName }, { name: playerTwoName }, session.winnerKey) : '',
+    result: session.result || '',
+    discardedCards: (session.discardedCards || []).map(formatFormulaCard),
+    remainingCards: (session.deck || []).length,
+    playerOneState: getFormulaPlayerStateSummary(session.playerOneState || {}, revealHidden),
+    playerTwoState: getFormulaPlayerStateSummary(session.playerTwoState || {}, revealHidden),
+    evaluation: evaluation ? {
+      playerOne: getFormulaEvaluationSummary(evaluation.playerOne),
+      playerTwo: getFormulaEvaluationSummary(evaluation.playerTwo),
+      choices: evaluation.choices || {},
+      highWinner: evaluation.highWinner || '',
+      lowWinner: evaluation.lowWinner || '',
+      winnerKey: evaluation.winnerKey || ''
+    } : null
+  };
+}
+
+function evaluateFormulaHighLowSession(session, choices) {
+  const playerOne = evaluateFormulaPlayerState(session.playerOneState);
+  const playerTwo = evaluateFormulaPlayerState(session.playerTwoState);
+  const normalizedChoices = {
+    playerOne: normalizeFormulaChoice(choices.playerOne),
+    playerTwo: normalizeFormulaChoice(choices.playerTwo)
+  };
+  const outcome = getFormulaOverallWinner({ playerOne, playerTwo }, normalizedChoices);
+
+  return {
+    playerOne,
+    playerTwo,
+    choices: normalizedChoices,
+    ...outcome
+  };
+}
+
 function formatFormulaHighLowRound(roundNumber) {
   return Number.isFinite(roundNumber) && roundNumber > 0
     ? `${roundNumber}라운드`
@@ -2795,6 +3615,59 @@ function getFormulaHighLowPayoutText(settlement) {
   return `${getFormulaHighLowWinnerLabel(settlement)} ${settlement.pot}개`;
 }
 
+function makeFormulaHighLowCardsText(name, playerState, playerEval, choice) {
+  const hidden = formatFormulaCard(playerState.hidden);
+  const open = (playerState.openSlots || []).map(formatFormulaOpenSlot).join(', ');
+  const high = playerEval?.high;
+  const low = playerEval?.low;
+
+  return `${name}
+선택: ${choice || '-'}
+히든: ${hidden}
+오픈: ${open || '-'}
+하이 수식: ${high ? `${high.expression} = ${high.valueText} (20까지 ${high.distanceText})` : '-'}
+로우 수식: ${low ? `${low.expression} = ${low.valueText} (1까지 ${low.distanceText})` : '-'}
+하이 동점 카드: ${formatFormulaCard(playerEval?.highTieCard)}
+로우 동점 카드: ${formatFormulaCard(playerEval?.lowTieCard)}`;
+}
+
+function makeFormulaHighLowProgressLog(playerOne, playerTwo, session, action) {
+  return `수식 하이 로우 진행
+행동: ${action}
+라운드: ${formatFormulaHighLowRound(session.roundNumber)}
+공개 규칙: ${formatFormulaHighLowRevealRule(session.roundNumber)}
+플레이어 1: ${playerOne.name}
+플레이어 2: ${playerTwo.name}
+각자 베팅: ${session.color} ${session.bet}개
+단계: ${session.stage}
+
+${playerOne.name}
+히든: ${formatFormulaCard(session.playerOneState.hidden)}
+오픈: ${(session.playerOneState.openSlots || []).map(formatFormulaOpenSlot).join(', ') || '-'}
+
+${playerTwo.name}
+히든: ${formatFormulaCard(session.playerTwoState.hidden)}
+오픈: ${(session.playerTwoState.openSlots || []).map(formatFormulaOpenSlot).join(', ') || '-'}
+
+버린 기호: ${(session.discardedCards || []).map(formatFormulaCard).join(', ') || '-'}
+남은 카드: ${(session.deck || []).length}`;
+}
+
+function makeFormulaHighLowProgressPublicLog(playerOne, playerTwo, session, action) {
+  return `수식 하이 로우 진행
+행동: ${action}
+라운드: ${formatFormulaHighLowRound(session.roundNumber)}
+공개 규칙: ${formatFormulaHighLowRevealRule(session.roundNumber)}
+플레이어 1: ${playerOne.name}
+플레이어 2: ${playerTwo.name}
+각자 베팅: ${session.color} ${session.bet}개
+단계: ${session.stage}
+
+${playerOne.name} 오픈: ${(session.playerOneState.openSlots || []).map(formatFormulaOpenSlot).join(', ') || '-'}
+${playerTwo.name} 오픈: ${(session.playerTwoState.openSlots || []).map(formatFormulaOpenSlot).join(', ') || '-'}
+버린 기호: ${(session.discardedCards || []).map(formatFormulaCard).join(', ') || '-'}`;
+}
+
 function makeFormulaHighLowLog(settlement) {
   return `수식 하이 로우 정산
 라운드: ${formatFormulaHighLowRound(settlement.roundNumber)}
@@ -2804,8 +3677,14 @@ function makeFormulaHighLowLog(settlement) {
 플레이어 2: ${settlement.playerTwo.name}
 각자 베팅: ${settlement.bet}개
 총 팟: ${settlement.pot}개
+하이 승자: ${getFormulaWinnerName(settlement.playerOne, settlement.playerTwo, settlement.evaluation.highWinner)}
+로우 승자: ${getFormulaWinnerName(settlement.playerOne, settlement.playerTwo, settlement.evaluation.lowWinner)}
 승자: ${getFormulaHighLowWinnerLabel(settlement)}
 지급: ${getFormulaHighLowPayoutText(settlement)}
+
+${makeFormulaHighLowCardsText(settlement.playerOne.name, settlement.session.playerOneState, settlement.evaluation.playerOne, settlement.evaluation.choices.playerOne)}
+
+${makeFormulaHighLowCardsText(settlement.playerTwo.name, settlement.session.playerTwoState, settlement.evaluation.playerTwo, settlement.evaluation.choices.playerTwo)}
 
 결과 메모
 ${settlement.memo || '-'}
@@ -2823,8 +3702,14 @@ function makeFormulaHighLowPublicLog(settlement) {
 플레이어 2: ${settlement.playerTwo.name}
 각자 베팅: ${settlement.color} ${settlement.bet}개
 총 팟: ${settlement.color} ${settlement.pot}개
+하이 승자: ${getFormulaWinnerName(settlement.playerOne, settlement.playerTwo, settlement.evaluation.highWinner)}
+로우 승자: ${getFormulaWinnerName(settlement.playerOne, settlement.playerTwo, settlement.evaluation.lowWinner)}
 승자: ${getFormulaHighLowWinnerLabel(settlement)}
 지급: ${getFormulaHighLowPayoutText(settlement)}
+
+${makeFormulaHighLowCardsText(settlement.playerOne.name, settlement.session.playerOneState, settlement.evaluation.playerOne, settlement.evaluation.choices.playerOne)}
+
+${makeFormulaHighLowCardsText(settlement.playerTwo.name, settlement.session.playerTwoState, settlement.evaluation.playerTwo, settlement.evaluation.choices.playerTwo)}
 
 결과 메모
 ${settlement.memo || '-'}`;
@@ -2963,19 +3848,11 @@ app.post('/rates', async (req, res) => {
   }
 });
 
-app.post('/formula-high-low/settle', async (req, res) => {
+app.post('/formula-high-low/start', async (req, res) => {
   try {
-    const {
-      playerId,
-      opponentId,
-      color,
-      amount,
-      winnerKey,
-      roundNumber,
-      memo = ''
-    } = req.body;
+    const { playerId, opponentId, color, amount, roundNumber } = req.body;
     const bet = toChipAmount(amount);
-    const nextWinnerKey = String(winnerKey || '').trim();
+    const parsedRoundNumber = toChipAmount(roundNumber);
 
     if (!validateColor(color)) {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
@@ -2983,10 +3860,6 @@ app.post('/formula-high-low/settle', async (req, res) => {
 
     if (!Number.isFinite(bet) || bet <= 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
-    }
-
-    if (!['playerOne', 'playerTwo', 'tie'].includes(nextWinnerKey)) {
-      return res.status(400).json({ error: '승자 선택은 playerOne, playerTwo, tie 중 하나여야 합니다.' });
     }
 
     if (Number(playerId) === Number(opponentId)) {
@@ -3011,33 +3884,31 @@ app.post('/formula-high-low/settle', async (req, res) => {
     consumeGameLimit(playerOne, 'formulahighlow');
     consumeGameLimit(playerTwo, 'formulahighlow');
 
-    if (nextWinnerKey === 'playerOne') {
-      playerOne[color] += bet;
-      playerTwo[color] -= bet;
-    } else if (nextWinnerKey === 'playerTwo') {
-      playerOne[color] -= bet;
-      playerTwo[color] += bet;
-    }
-
-    const parsedRoundNumber = toChipAmount(roundNumber);
-    const pot = bet * 2;
-    const settlement = {
-      roundNumber: Number.isFinite(parsedRoundNumber) && parsedRoundNumber > 0 ? parsedRoundNumber : null,
+    const deck = createFormulaHighLowDeck();
+    const discardedCards = [];
+    const session = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      playerOneId: playerOne.id,
+      playerTwoId: playerTwo.id,
       color,
       bet,
-      pot,
-      winnerKey: nextWinnerKey,
-      playerOne,
-      playerTwo,
-      memo: String(memo || '').trim()
+      roundNumber: Number.isFinite(parsedRoundNumber) && parsedRoundNumber > 0 ? parsedRoundNumber : null,
+      deck,
+      discardedCards,
+      playerOneState: createFormulaPlayerState(deck, discardedCards),
+      playerTwoState: createFormulaPlayerState(deck, discardedCards),
+      stage: 'initial',
+      winnerKey: '',
+      result: ''
     };
 
     const [log] = await Promise.all([
       addLog(
         'formulahighlow',
-        makeFormulaHighLowLog(settlement),
-        makeFormulaHighLowPublicLog(settlement)
+        makeFormulaHighLowProgressLog(playerOne, playerTwo, session, '시작 / 히든 1장 + 오픈 2장'),
+        makeFormulaHighLowProgressPublicLog(playerOne, playerTwo, session, '시작 / 오픈 2장')
       ),
+      saveFormulaHighLowSession(session),
       savePlayers([playerOne, playerTwo])
     ]);
 
@@ -3047,9 +3918,151 @@ app.post('/formula-high-low/settle', async (req, res) => {
 
     res.json({
       ok: true,
+      state: getFormulaHighLowSessionState(session, { revealHidden: true }),
+      log: log.text,
+      logs: [log],
+      players: serializePlayers([playerOne, playerTwo])
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 시작 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/formula-high-low/final-card', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const session = await getFormulaHighLowSession(sessionId);
+
+    if (!session) {
+      return res.status(400).json({ error: '진행 중인 수식 하이 로우가 없습니다.' });
+    }
+
+    if (session.stage !== 'initial') {
+      return res.status(400).json({ error: '최종 오픈 카드를 받을 수 없는 단계입니다.' });
+    }
+
+    await loadPlayersByIds([session.playerOneId, session.playerTwoId]);
+    const playerOne = getPlayerById(session.playerOneId);
+    const playerTwo = getPlayerById(session.playerTwoId);
+
+    if (!playerOne || !playerTwo) {
+      await deleteFormulaHighLowSession(session.id);
+      return res.status(404).json({ error: '플레이어를 찾을 수 없어 세션을 종료했습니다.' });
+    }
+
+    dealFormulaFinalOpenSlot(session.playerOneState, session.deck, session.discardedCards);
+    dealFormulaFinalOpenSlot(session.playerTwoState, session.deck, session.discardedCards);
+    session.stage = 'final';
+
+    const [log] = await Promise.all([
+      addLog(
+        'formulahighlow',
+        makeFormulaHighLowProgressLog(playerOne, playerTwo, session, '최종 오픈 카드'),
+        makeFormulaHighLowProgressPublicLog(playerOne, playerTwo, session, '최종 오픈 카드')
+      ),
+      saveFormulaHighLowSession(session)
+    ]);
+
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({
+      ok: true,
+      state: getFormulaHighLowSessionState(session, { revealHidden: true }),
+      log: log.text,
+      logs: [log],
+      players: serializePlayers([playerOne, playerTwo])
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 최종 카드 처리 중 오류가 발생했습니다.' });
+  }
+});
+
+async function handleFormulaHighLowResolve(req, res) {
+  try {
+    const {
+      sessionId,
+      playerOneChoice,
+      playerTwoChoice,
+      memo = ''
+    } = req.body;
+    const session = await getFormulaHighLowSession(sessionId);
+
+    if (!session) {
+      return res.status(400).json({ error: '진행 중인 수식 하이 로우가 없습니다.' });
+    }
+
+    if (session.stage !== 'final') {
+      return res.status(400).json({ error: '최종 오픈 카드까지 받은 뒤 정산할 수 있습니다.' });
+    }
+
+    await loadPlayersByIds([session.playerOneId, session.playerTwoId]);
+
+    const playerOne = getPlayerById(session.playerOneId);
+    const playerTwo = getPlayerById(session.playerTwoId);
+
+    if (!playerOne || !playerTwo) {
+      await deleteFormulaHighLowSession(session.id);
+      return res.status(404).json({ error: '플레이어를 찾을 수 없어 세션을 종료했습니다.' });
+    }
+
+    const evaluation = evaluateFormulaHighLowSession(session, {
+      playerOne: playerOneChoice,
+      playerTwo: playerTwoChoice
+    });
+    const winnerKey = evaluation.winnerKey;
+    const pot = session.bet * 2;
+
+    if (winnerKey === 'playerOne') {
+      playerOne[session.color] += session.bet;
+      playerTwo[session.color] -= session.bet;
+      session.result = `${playerOne.name} 승리`;
+    } else if (winnerKey === 'playerTwo') {
+      playerOne[session.color] -= session.bet;
+      playerTwo[session.color] += session.bet;
+      session.result = `${playerTwo.name} 승리`;
+    } else {
+      session.result = '무승부 / 팟 분배';
+    }
+
+    session.stage = 'done';
+    session.winnerKey = winnerKey;
+
+    const settlement = {
+      roundNumber: session.roundNumber,
+      color: session.color,
+      bet: session.bet,
       pot,
-      payout: nextWinnerKey === 'tie' ? bet : pot,
-      winnerKey: nextWinnerKey,
+      winnerKey,
+      playerOne,
+      playerTwo,
+      session,
+      evaluation,
+      memo: String(memo || '').trim()
+    };
+
+    const [log] = await Promise.all([
+      addLog(
+        'formulahighlow',
+        makeFormulaHighLowLog(settlement),
+        makeFormulaHighLowPublicLog(settlement)
+      ),
+      savePlayers([playerOne, playerTwo]),
+      deleteFormulaHighLowSession(session.id)
+    ]);
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({
+      ok: true,
+      state: getFormulaHighLowSessionState(session, { revealHidden: true, evaluation }),
+      pot,
+      payout: winnerKey === 'tie' ? session.bet : pot,
+      winnerKey,
       log: log.text,
       logs: [log],
       players: serializePlayers([playerOne, playerTwo])
@@ -3058,7 +4071,10 @@ app.post('/formula-high-low/settle', async (req, res) => {
     console.error(err);
     res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 정산 중 오류가 발생했습니다.' });
   }
-});
+}
+
+app.post('/formula-high-low/resolve', handleFormulaHighLowResolve);
+app.post('/formula-high-low/settle', handleFormulaHighLowResolve);
 
 app.post('/pvp-baccarat/start', async (req, res) => {
   try {

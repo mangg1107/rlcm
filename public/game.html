@@ -169,11 +169,20 @@
       </div>
 
       <div class="form-row">
-        <label>Winner</label><br />
-        <select id="formulaWinnerKey" onchange="updateBalanceHint()">
-          <option value="playerOne">Player 1 wins</option>
-          <option value="playerTwo">Player 2 wins</option>
-          <option value="tie">Split pot / tie</option>
+        <label>Player 1 marker</label><br />
+        <select id="formulaPlayerOneChoice" onchange="updateBalanceHint()">
+          <option value="HIGH">HIGH</option>
+          <option value="LOW">LOW</option>
+          <option value="SWING">SWING</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>Player 2 marker</label><br />
+        <select id="formulaPlayerTwoChoice" onchange="updateBalanceHint()">
+          <option value="HIGH">HIGH</option>
+          <option value="LOW">LOW</option>
+          <option value="SWING">SWING</option>
         </select>
       </div>
 
@@ -182,10 +191,12 @@
         <textarea id="formulaMemo" placeholder="하이/로우/스윙 선택, 히든 카드 공개, 수식, 결과값, 동점 판정 근거를 적어두세요."></textarea>
       </div>
 
-      <div class="hint">Two players each bet the entered amount. Pick the winner after the table resolves formulas. Split pot / tie returns both players' bets.</div>
+      <div class="hint">Start deals hidden cards and 2 open cards. Deal final open adds the last open card. Resolve reveals choices and automatically finds each player's closest formulas for 20 and 1.</div>
 
-      <button type="button" onclick="settleFormulaHighLow()">Settle Formula High Low</button>
-      <pre id="formulaHighLowState">No Formula High Low settlement yet.</pre>
+      <button type="button" onclick="startFormulaHighLow()">Start Formula High Low</button>
+      <button id="formulaFinalButton" type="button" onclick="dealFormulaHighLowFinalCard()" disabled>Deal final open</button>
+      <button id="formulaResolveButton" type="button" onclick="resolveFormulaHighLow()" disabled>Resolve Formula High Low</button>
+      <pre id="formulaHighLowState">No Formula High Low in progress.</pre>
     </div>
 
     <div id="normalGameFields">
@@ -229,6 +240,7 @@
     let activeBaccaratPlayerId = null;
     let activeRussianRouletteSessionId = null;
     let activePvpSessionId = null;
+    let activeFormulaHighLowSessionId = null;
     const CHIP_LABELS = {
       red: 'Red',
       blue: 'Blue',
@@ -261,6 +273,8 @@
     const pvpHitButton = document.getElementById('pvpHitButton');
     const pvpStandButton = document.getElementById('pvpStandButton');
     const formulaHighLowStateBox = document.getElementById('formulaHighLowState');
+    const formulaFinalButton = document.getElementById('formulaFinalButton');
+    const formulaResolveButton = document.getElementById('formulaResolveButton');
     const balanceHint = document.getElementById('balanceHint');
 
     async function loadPlayers() {
@@ -459,7 +473,7 @@
       updateBalanceHint();
     }
 
-    function validateFormulaHighLowSettlement(playerId, opponentId, color, amount) {
+    function validateFormulaHighLowStart(playerId, opponentId, color, amount) {
       if (Number(playerId) === Number(opponentId)) {
         alert('Choose two different players.');
         return false;
@@ -505,15 +519,10 @@
           const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
           return `${player.name} ${balance}개 ${status} / plays ${limit}`;
         });
-        const winnerKey = document.getElementById('formulaWinnerKey').value;
-        const winnerLabel = winnerKey === 'tie'
-          ? 'split pot'
-          : winnerKey === 'playerTwo'
-            ? 'Player 2'
-            : 'Player 1';
+        const markerText = `P1 ${document.getElementById('formulaPlayerOneChoice').value} / P2 ${document.getElementById('formulaPlayerTwoChoice').value}`;
 
         balanceHint.textContent = rows.length
-          ? `Formula High Low 2P (${CHIP_LABELS[color]}): pot ${(Number.isFinite(bet) && bet > 0 ? bet * 2 : 0)}개 / ${rows.join(' / ')} / winner ${winnerLabel}`
+          ? `Formula High Low 2P (${CHIP_LABELS[color]}): pot ${(Number.isFinite(bet) && bet > 0 ? bet * 2 : 0)}개 / ${rows.join(' / ')} / ${markerText}`
           : '';
         return;
       }
@@ -699,6 +708,8 @@
       pvpStartButton.textContent = isPvpBaccarat ? 'Start PVP Baccarat' : 'Start PVP Blackjack';
       pvpHitButton.disabled = !activePvpSessionId;
       pvpStandButton.disabled = !activePvpSessionId;
+      formulaFinalButton.disabled = !activeFormulaHighLowSessionId;
+      formulaResolveButton.disabled = !activeFormulaHighLowSessionId;
 
       if (isRoulette) {
         updateRouletteDetailInput();
@@ -900,20 +911,18 @@ Winner: ${state.winnerName || '-'}`;
       pvpStandButton.disabled = state.done;
     }
 
-    async function settleFormulaHighLow() {
+    async function startFormulaHighLow() {
       const payload = {
         ...getBasePayload(),
         opponentId: Number(document.getElementById('formulaOpponentId').value),
-        winnerKey: document.getElementById('formulaWinnerKey').value,
-        roundNumber: Number(document.getElementById('formulaRoundNumber').value),
-        memo: document.getElementById('formulaMemo').value
+        roundNumber: Number(document.getElementById('formulaRoundNumber').value)
       };
 
-      if (!validateFormulaHighLowSettlement(payload.playerId, payload.opponentId, payload.color, payload.amount)) {
+      if (!validateFormulaHighLowStart(payload.playerId, payload.opponentId, payload.color, payload.amount)) {
         return;
       }
 
-      const res = await fetch('/api/formula-high-low/settle', {
+      const res = await fetch('/api/formula-high-low/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -926,19 +935,98 @@ Winner: ${state.winnerName || '-'}`;
         return;
       }
 
+      activeFormulaHighLowSessionId = data.state.id;
+      renderFormulaHighLowState(data.state);
       renderLogs(data.logs);
       mergePlayers(data.players);
+    }
 
-      const winnerLabel = data.winnerKey === 'tie'
-        ? 'Split pot'
-        : data.winnerKey === 'playerTwo'
-          ? 'Player 2'
-          : 'Player 1';
-      formulaHighLowStateBox.textContent = `Formula High Low settled
-Pot: ${payload.color} ${data.pot}
-Winner: ${winnerLabel}
-Payout: ${data.payout}`;
-      alert(`Formula High Low settled. Winner: ${winnerLabel}.`);
+    async function dealFormulaHighLowFinalCard() {
+      const res = await fetch('/api/formula-high-low/final-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeFormulaHighLowSessionId })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to deal final Formula High Low card.');
+        return;
+      }
+
+      renderFormulaHighLowState(data.state);
+      renderLogs(data.logs);
+      mergePlayers(data.players);
+    }
+
+    async function resolveFormulaHighLow() {
+      const res = await fetch('/api/formula-high-low/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: activeFormulaHighLowSessionId,
+          playerOneChoice: document.getElementById('formulaPlayerOneChoice').value,
+          playerTwoChoice: document.getElementById('formulaPlayerTwoChoice').value,
+          memo: document.getElementById('formulaMemo').value
+        })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to resolve Formula High Low.');
+        return;
+      }
+
+      renderFormulaHighLowState(data.state);
+      renderLogs(data.logs);
+      mergePlayers(data.players);
+      activeFormulaHighLowSessionId = null;
+      alert(data.state.result || 'Formula High Low resolved.');
+    }
+
+    function formatFormulaEval(evalState, side) {
+      const result = evalState?.[side];
+      return result
+        ? `${result.expression} = ${result.value} (${result.distance})`
+        : '-';
+    }
+
+    function renderFormulaHighLowState(state) {
+      const p1 = state.playerOneState;
+      const p2 = state.playerTwoState;
+      const p1Eval = state.evaluation?.playerOne;
+      const p2Eval = state.evaluation?.playerTwo;
+
+      formulaHighLowStateBox.textContent = `Formula High Low 2P
+Round: ${state.roundNumber || '-'}
+Stage: ${state.stage}
+Player 1: ${state.playerOne.name}
+Hidden: ${p1.hidden}
+Open: ${p1.openSlots.join(', ') || '-'}
+Root: ${p1.rootCount} / Multiply: ${p1.multiplyCount}
+High: ${formatFormulaEval(p1Eval, 'high')}
+Low: ${formatFormulaEval(p1Eval, 'low')}
+
+Player 2: ${state.playerTwo.name}
+Hidden: ${p2.hidden}
+Open: ${p2.openSlots.join(', ') || '-'}
+Root: ${p2.rootCount} / Multiply: ${p2.multiplyCount}
+High: ${formatFormulaEval(p2Eval, 'high')}
+Low: ${formatFormulaEval(p2Eval, 'low')}
+
+Bet: ${state.color} ${state.bet}
+Pot: ${state.color} ${state.pot}
+Discarded symbols: ${state.discardedCards.join(', ') || '-'}
+Remaining deck: ${state.remainingCards}
+High winner: ${state.evaluation?.highWinner || '-'}
+Low winner: ${state.evaluation?.lowWinner || '-'}
+Winner: ${state.winnerName || '-'}
+Result: ${state.result || 'in progress'}`;
+
+      formulaFinalButton.disabled = state.stage !== 'initial';
+      formulaResolveButton.disabled = state.stage !== 'final';
     }
 
     async function startRussianRoulette() {
