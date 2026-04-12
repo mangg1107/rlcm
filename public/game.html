@@ -170,7 +170,7 @@
 
       <div class="form-row">
         <label>Player 1 marker</label><br />
-        <select id="formulaPlayerOneChoice" onchange="updateBalanceHint()">
+        <select id="formulaPlayerOneChoice" onchange="updateFormulaRequiredInputs(); updateBalanceHint()">
           <option value="HIGH">HIGH</option>
           <option value="LOW">LOW</option>
           <option value="SWING">SWING</option>
@@ -179,12 +179,14 @@
 
       <div class="form-row">
         <label>Player 2 marker</label><br />
-        <select id="formulaPlayerTwoChoice" onchange="updateBalanceHint()">
+        <select id="formulaPlayerTwoChoice" onchange="updateFormulaRequiredInputs(); updateBalanceHint()">
           <option value="HIGH">HIGH</option>
           <option value="LOW">LOW</option>
           <option value="SWING">SWING</option>
         </select>
       </div>
+
+      <div class="hint" id="formulaRequiredHint"></div>
 
       <div class="form-row">
         <label>Player 1 HIGH formula</label><br />
@@ -211,7 +213,7 @@
         <textarea id="formulaMemo" placeholder="하이/로우/스윙 선택, 히든 카드 공개, 수식, 결과값, 동점 판정 근거를 적어두세요."></textarea>
       </div>
 
-      <div class="hint">Deal final open creates copyable input logs for Player 1 and Player 2. Enter the formulas they submit, then resolve. Use sqrt(숫자), √숫자, ×, ÷, *, / as needed.</div>
+      <div class="hint">Deal final open creates copyable input logs for Player 1 and Player 2. Enter the formulas they submit, then resolve. Use sqrt(숫자), root(숫자), 루트(숫자), √숫자, ×, ÷, *, / as needed.</div>
 
       <button type="button" onclick="startFormulaHighLow()">Start Formula High Low</button>
       <button id="formulaFinalButton" type="button" onclick="dealFormulaHighLowFinalCard()" disabled>Deal final open</button>
@@ -534,6 +536,58 @@
       return validateTwoPlayerParticipants(participantIds, color, amount, 'Formula High Low');
     }
 
+    function getFormulaChoiceSides(choice) {
+      return choice === 'SWING' ? ['HIGH', 'LOW'] : [choice];
+    }
+
+    function getFormulaInputRequirements() {
+      const playerOneSides = getFormulaChoiceSides(document.getElementById('formulaPlayerOneChoice').value);
+      const playerTwoSides = getFormulaChoiceSides(document.getElementById('formulaPlayerTwoChoice').value);
+
+      return [
+        { id: 'formulaPlayerOneHigh', label: 'Player 1 HIGH', required: playerOneSides.includes('HIGH') },
+        { id: 'formulaPlayerOneLow', label: 'Player 1 LOW', required: playerOneSides.includes('LOW') },
+        { id: 'formulaPlayerTwoHigh', label: 'Player 2 HIGH', required: playerTwoSides.includes('HIGH') },
+        { id: 'formulaPlayerTwoLow', label: 'Player 2 LOW', required: playerTwoSides.includes('LOW') }
+      ];
+    }
+
+    function updateFormulaRequiredInputs() {
+      const requirements = getFormulaInputRequirements();
+      const requiredLabels = [];
+
+      requirements.forEach((field) => {
+        const input = document.getElementById(field.id);
+        const row = input.closest('.form-row');
+        input.required = field.required;
+        input.disabled = !field.required;
+        input.placeholder = field.required
+          ? `${field.label} formula`
+          : 'Not used for this marker';
+        row.style.opacity = field.required ? '1' : '0.55';
+
+        if (field.required) {
+          requiredLabels.push(field.label);
+        }
+      });
+
+      document.getElementById('formulaRequiredHint').textContent =
+        `Required formulas: ${requiredLabels.join(', ') || '-'}`;
+    }
+
+    function validateFormulaSubmissionInputs() {
+      const missing = getFormulaInputRequirements()
+        .filter((field) => field.required && !document.getElementById(field.id).value.trim())
+        .map((field) => field.label);
+
+      if (missing.length) {
+        alert(`Fill required Formula High Low formulas:\n${missing.join('\n')}`);
+        return false;
+      }
+
+      return true;
+    }
+
     function updateBalanceHint() {
       const gameType = document.getElementById('gameType').value;
       const color = document.getElementById('color').value;
@@ -772,6 +826,7 @@
 
       if (isFormulaHighLow) {
         updateFormulaHighLowPlayers();
+        updateFormulaRequiredInputs();
       }
 
       updateBalanceHint();
@@ -992,6 +1047,7 @@ Winner: ${state.winnerName || '-'}`;
 
       activeFormulaHighLowSessionId = data.state.id;
       clearFormulaHighLowFormulaInputs();
+      updateFormulaRequiredInputs();
       renderFormulaHighLowState(data.state);
       renderLogs(data.logs);
       mergePlayers(data.players);
@@ -1017,6 +1073,15 @@ Winner: ${state.winnerName || '-'}`;
     }
 
     async function resolveFormulaHighLow() {
+      if (!activeFormulaHighLowSessionId) {
+        alert('No Formula High Low session in progress.');
+        return;
+      }
+
+      if (!validateFormulaSubmissionInputs()) {
+        return;
+      }
+
       const res = await fetch('/api/formula-high-low/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1096,6 +1161,7 @@ Markers: ${choiceText}
 Player 1: ${state.playerOne.name}
 Hidden: ${p1.hidden}
 Open: ${p1.openSlots.join(', ') || '-'}
+Numbers: ${(p1.numbers || []).join(', ') || '-'}
 Root: ${p1.rootCount} / Multiply: ${p1.multiplyCount}
 High: ${formatFormulaEval(p1Eval, 'high')}
 Low: ${formatFormulaEval(p1Eval, 'low')}
@@ -1103,6 +1169,7 @@ Low: ${formatFormulaEval(p1Eval, 'low')}
 Player 2: ${state.playerTwo.name}
 Hidden: ${p2.hidden}
 Open: ${p2.openSlots.join(', ') || '-'}
+Numbers: ${(p2.numbers || []).join(', ') || '-'}
 Root: ${p2.rootCount} / Multiply: ${p2.multiplyCount}
 High: ${formatFormulaEval(p2Eval, 'high')}
 Low: ${formatFormulaEval(p2Eval, 'low')}

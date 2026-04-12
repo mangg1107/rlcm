@@ -3600,7 +3600,7 @@ function tokenizeFormulaExpression(expression) {
     }
 
     const rest = text.slice(index);
-    const sqrtMatch = rest.match(/^(sqrt|root)/i);
+    const sqrtMatch = rest.match(/^(sqrt|root|루트)/i);
 
     if (sqrtMatch) {
       tokens.push({ type: 'sqrt', value: sqrtMatch[0] });
@@ -3816,23 +3816,35 @@ function evaluateSubmittedFormula(playerState, expression, target) {
   };
 }
 
-function evaluateSubmittedPlayerFormulas(playerState, formulas, requiredSides) {
+function evaluateSubmittedFormulaForSide(playerState, expression, target, label) {
+  try {
+    return evaluateSubmittedFormula(playerState, expression, target);
+  } catch (err) {
+    if (err.status) {
+      throw createHttpError(err.status, `${label}: ${err.message}`);
+    }
+
+    throw err;
+  }
+}
+
+function evaluateSubmittedPlayerFormulas(playerState, formulas, requiredSides, playerLabel) {
   const highFormula = String(formulas.high || '').trim();
   const lowFormula = String(formulas.low || '').trim();
   const needsHigh = requiredSides.includes('HIGH');
   const needsLow = requiredSides.includes('LOW');
 
   if (needsHigh && !highFormula) {
-    throw createHttpError(400, 'HIGH 수식을 입력해야 합니다.');
+    throw createHttpError(400, `${playerLabel} HIGH 수식을 입력해야 합니다.`);
   }
 
   if (needsLow && !lowFormula) {
-    throw createHttpError(400, 'LOW 수식을 입력해야 합니다.');
+    throw createHttpError(400, `${playerLabel} LOW 수식을 입력해야 합니다.`);
   }
 
   return {
-    high: needsHigh ? evaluateSubmittedFormula(playerState, highFormula, 20) : null,
-    low: needsLow ? evaluateSubmittedFormula(playerState, lowFormula, 1) : null,
+    high: needsHigh ? evaluateSubmittedFormulaForSide(playerState, highFormula, 20, `${playerLabel} HIGH`) : null,
+    low: needsLow ? evaluateSubmittedFormulaForSide(playerState, lowFormula, 1, `${playerLabel} LOW`) : null,
     highTieCard: getFormulaTieCard(playerState, 'HIGH'),
     lowTieCard: getFormulaTieCard(playerState, 'LOW')
   };
@@ -3847,12 +3859,14 @@ function evaluateFormulaHighLowSubmission(session, choices, formulas) {
   const playerOne = evaluateSubmittedPlayerFormulas(
     session.playerOneState,
     formulas.playerOne || {},
-    requiredSides.playerOne
+    requiredSides.playerOne,
+    'Player 1'
   );
   const playerTwo = evaluateSubmittedPlayerFormulas(
     session.playerTwoState,
     formulas.playerTwo || {},
-    requiredSides.playerTwo
+    requiredSides.playerTwo,
+    'Player 2'
   );
   const outcome = getFormulaOverallWinner({ playerOne, playerTwo }, normalizedChoices);
 
@@ -4017,7 +4031,7 @@ function makeFormulaHighLowPlayerInputLog(player, playerState, session, playerIn
 HIGH 수식:
 LOW 수식:
 
-참고: 수식에는 사용 숫자를 정확히 한 번씩 모두 넣어야 합니다. 루트가 있으면 sqrt(숫자) 또는 √숫자 형식으로 입력하세요.`;
+참고: 수식에는 사용 숫자를 정확히 한 번씩 모두 넣어야 합니다. 루트가 있으면 sqrt(숫자), root(숫자), 루트(숫자), √숫자 형식으로 입력하세요.`;
 }
 
 function makeFormulaHighLowLog(settlement) {
