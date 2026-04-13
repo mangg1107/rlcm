@@ -4651,11 +4651,15 @@ function makeCombinationBettingSettlementLog(participants, session, payouts) {
   const balances = participants
     .map((player) => `${player.name}: ${chipStr(player)}`)
     .join('\n');
+  const totalPaid = [...payouts.values()].reduce((sum, amount) => sum + amount, 0);
+  const discarded = Math.max(0, session.pot - totalPaid);
 
   return `콤비네이션 베팅 정산
 목표 숫자: ${formatFormulaValue(session.target)}
 각자 베팅: ${session.color} ${session.bet}개
 총 팟: ${session.color} ${session.pot}개
+지급 합계: ${session.color} ${totalPaid}개
+버림: ${session.color} ${discarded}개
 승자: ${getCombinationWinnerNames(session.winnerIds)}
 결과: ${session.result}
 
@@ -5005,15 +5009,10 @@ async function handleFormulaHighLowResolve(req, res) {
 
     const payouts = new Map();
     const baseShare = Math.floor(session.pot / winnerIds.length);
-    let remainder = session.pot - (baseShare * winnerIds.length);
 
     winnerIds.forEach((winnerId) => {
       const player = getPlayerById(winnerId);
-      const payout = baseShare + (remainder > 0 ? 1 : 0);
-
-      if (remainder > 0) {
-        remainder -= 1;
-      }
+      const payout = baseShare;
 
       player[session.color] += payout;
       payouts.set(Number(winnerId), payout);
