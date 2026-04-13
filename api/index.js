@@ -2773,6 +2773,22 @@ function formatPvpCardsForViewer(cards, valueLabel, value, revealed) {
   return `${cards.join(', ')} (${valueLabel}: ${value})`;
 }
 
+function formatPvpOpponentCardsForViewer(cards, valueLabel, value, revealed, gameType) {
+  if (revealed) {
+    return formatPvpCardsForViewer(cards, valueLabel, value, true);
+  }
+
+  if (gameType === 'pvpblackjack') {
+    const visibleCards = cards.length
+      ? [cards[0], ...cards.slice(1).map(() => 'HIDDEN')]
+      : ['HIDDEN'];
+
+    return `${visibleCards.join(', ')} (${valueLabel}: -)`;
+  }
+
+  return formatPvpCardsForViewer(cards, valueLabel, value, false);
+}
+
 function makePvpPlayerPublicSection(viewer, state, session, viewerKey) {
   const valueLabel = session.gameType === 'pvpbaccarat' ? 'Total' : 'Value';
   const opponentKey = viewerKey === 'playerOne' ? 'playerTwo' : 'playerOne';
@@ -2786,11 +2802,11 @@ function makePvpPlayerPublicSection(viewer, state, session, viewerKey) {
     : state[`${opponentKey}Value`];
   const revealOpponent = Boolean(state.done);
 
-  return `${viewer.name}에게 공개
+  return `${viewer.name}
 내 행동: ${state[`${viewerKey}Action`] || '-'}
 내 패: ${formatPvpCardsForViewer(viewerCards, valueLabel, viewerValue, true)}
 상대 행동: ${state[`${opponentKey}Action`] || '-'}
-상대 패: ${formatPvpCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent)}`;
+상대 패: ${formatPvpOpponentCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent, session.gameType)}`;
 }
 
 function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
