@@ -409,6 +409,7 @@ textarea:focus {
 .log-item pre,
 #blackjackState,
 #russianRouletteState,
+#pvpState,
 #formulaHighLowState {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -423,6 +424,40 @@ textarea:focus {
   line-height: 1.7;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.pvp-turn-banner {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 10px 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.pvp-turn-banner.is-done {
+  color: var(--text-2);
+}
+
+.pvp-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.pvp-actions button {
+  flex: 1 1 160px;
+  margin-left: 0;
+}
+
+.pvp-actions button + button {
+  margin-left: 0;
+  margin-top: 0;
 }
 
 .log-meta {
@@ -591,6 +626,15 @@ textarea:focus {
   .section > button {
     width: 100%;
     margin-top: var(--space-xs);
+  }
+
+  .pvp-actions {
+    display: grid;
+    gap: var(--space-xs);
+  }
+
+  .pvp-actions button {
+    width: 100%;
   }
 }
 

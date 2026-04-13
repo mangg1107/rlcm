@@ -133,10 +133,14 @@
         <label>Participants</label><br />
         <div id="pvpParticipantInputs"></div>
       </div>
+      <div class="hint" id="pvpModeHint">Choose 2 players, start the round, then use the active player's action buttons.</div>
+      <div id="pvpTurnBanner" class="pvp-turn-banner">No PVP game in progress.</div>
 
       <button id="pvpStartButton" type="button" onclick="startPvpGame()">Start PVP</button>
-      <button id="pvpHitButton" type="button" onclick="pvpAction('hit')" disabled>Hit</button>
-      <button id="pvpStandButton" type="button" onclick="pvpAction('stand')" disabled>Stand</button>
+      <div class="pvp-actions">
+        <button id="pvpHitButton" type="button" onclick="pvpAction('hit')" disabled>Hit</button>
+        <button id="pvpStandButton" type="button" onclick="pvpAction('stand')" disabled>Stand</button>
+      </div>
       <pre id="pvpState">No PVP game resolved.</pre>
     </div>
 
@@ -262,6 +266,7 @@
     let activeBaccaratPlayerId = null;
     let activeRussianRouletteSessionId = null;
     let activePvpSessionId = null;
+    let latestPvpState = null;
     let activeFormulaHighLowSessionId = null;
     const CHIP_LABELS = {
       red: 'Red',
@@ -291,6 +296,8 @@
     const pvpStartButton = document.getElementById('pvpStartButton');
     const pvpHitButton = document.getElementById('pvpHitButton');
     const pvpStandButton = document.getElementById('pvpStandButton');
+    const pvpModeHint = document.getElementById('pvpModeHint');
+    const pvpTurnBanner = document.getElementById('pvpTurnBanner');
     const formulaHighLowStateBox = document.getElementById('formulaHighLowState');
     const formulaFinalButton = document.getElementById('formulaFinalButton');
     const formulaResolveButton = document.getElementById('formulaResolveButton');
@@ -456,7 +463,7 @@
       return true;
     }
 
-    function renderTwoPlayerInputs(containerId, selectClassName) {
+    function renderTwoPlayerInputs(containerId, selectClassName, labels = ['Player 1', 'Player 2']) {
       const container = document.getElementById(containerId);
 
       if (!container) {
@@ -485,7 +492,7 @@
         const select = document.createElement('select');
 
         row.className = 'participant-row';
-        label.textContent = `Player ${index + 1}`;
+        label.textContent = labels[index] || `Player ${index + 1}`;
         select.className = selectClassName;
         select.onchange = updateBalanceHint;
         select.innerHTML = '<option value="">Select player</option>' + players
@@ -515,7 +522,12 @@
     }
 
     function updatePvpPlayers() {
-      renderTwoPlayerInputs('pvpParticipantInputs', 'pvp-participant-select');
+      const gameType = document.getElementById('gameType').value;
+      const labels = gameType === 'pvpbaccarat'
+        ? ['PLAYER hand', 'BANKER hand']
+        : ['Player 1', 'Player 2'];
+
+      renderTwoPlayerInputs('pvpParticipantInputs', 'pvp-participant-select', labels);
       updateBalanceHint();
     }
 
@@ -783,6 +795,61 @@
       hint.textContent = placeholder;
     }
 
+    function getSelectedPvpGameType() {
+      const gameType = document.getElementById('gameType').value;
+      return gameType === 'pvpbaccarat' ? 'pvpbaccarat' : 'pvpblackjack';
+    }
+
+    function getPvpGameLabel(gameType) {
+      return gameType === 'pvpbaccarat' ? 'PVP Baccarat' : 'PVP Blackjack';
+    }
+
+    function formatPvpAction(action) {
+      if (action === 'hit') {
+        return 'Hit';
+      }
+
+      if (action === 'stand') {
+        return 'Stand';
+      }
+
+      return 'Waiting';
+    }
+
+    function formatPvpCards(cards) {
+      return Array.isArray(cards) && cards.length ? cards.join(', ') : '-';
+    }
+
+    function updatePvpControls(state = latestPvpState) {
+      const selectedGameType = getSelectedPvpGameType();
+      const canAct = Boolean(activePvpSessionId && state && !state.done);
+      const displayGameType = canAct ? state.gameType : selectedGameType;
+      const gameLabel = getPvpGameLabel(displayGameType);
+      const isBaccarat = displayGameType === 'pvpbaccarat';
+      const activeName = canAct ? state.activePlayerName : '';
+
+      pvpStartButton.textContent = `Start ${getPvpGameLabel(selectedGameType)}`;
+      pvpHitButton.textContent = canAct ? `${activeName}: Hit` : 'Hit';
+      pvpStandButton.textContent = canAct ? `${activeName}: Stand` : 'Stand';
+      pvpHitButton.disabled = !canAct;
+      pvpStandButton.disabled = !canAct;
+
+      pvpModeHint.textContent = isBaccarat
+        ? 'PLAYER hand and BANKER hand each choose Hit or Stand. Higher baccarat total wins.'
+        : 'Each player chooses Hit or Stand. Higher blackjack value wins unless a hand busts.';
+
+      if (!state) {
+        pvpTurnBanner.textContent = `${gameLabel}: choose 2 players and start a round.`;
+        pvpTurnBanner.classList.remove('is-done');
+        return;
+      }
+
+      pvpTurnBanner.textContent = state.done
+        ? `${gameLabel}: finished / ${state.result || 'Result recorded'}`
+        : `${gameLabel}: ${state.activePlayerName} turn / ${state.remainingCards ?? '-'} cards left`;
+      pvpTurnBanner.classList.toggle('is-done', Boolean(state.done));
+    }
+
     function updateGameFields() {
       const gameType = document.getElementById('gameType').value;
       const isBlackjack = gameType === 'blackjack';
@@ -806,9 +873,7 @@
       document.getElementById('normalGameFields').style.display = isBlackjack || isRoulette || isHighLow || isBaccarat || isRedBlack || isPvp || isRussianRoulette || isFormulaHighLow ? 'none' : 'block';
       document.getElementById('blackjackControls').style.display = isBlackjack ? 'block' : 'none';
       document.getElementById('playerField').style.display = isRussianRoulette || isPvp || isFormulaHighLow ? 'none' : 'block';
-      pvpStartButton.textContent = isPvpBaccarat ? 'Start PVP Baccarat' : 'Start PVP Blackjack';
-      pvpHitButton.disabled = !activePvpSessionId;
-      pvpStandButton.disabled = !activePvpSessionId;
+      updatePvpControls(latestPvpState);
       formulaFinalButton.disabled = !activeFormulaHighLowSessionId;
       formulaResolveButton.disabled = !activeFormulaHighLowSessionId;
 
@@ -987,36 +1052,35 @@
     }
 
     function renderPvpState(state) {
-      if (state.gameType === 'pvpbaccarat') {
-        pvpStateBox.textContent = `PVP Baccarat
-PLAYER: ${state.playerOne.name}
-BANKER: ${state.playerTwo.name}
-Bet: ${state.color} ${state.bet}
-Turn: ${state.done ? '-' : state.activePlayerName}
-PLAYER action: ${state.playerOneAction || '-'}
-BANKER action: ${state.playerTwoAction || '-'}
-PLAYER cards: ${state.playerOneCards.join(', ')} (${state.playerOneTotal})
-BANKER cards: ${state.playerTwoCards.join(', ')} (${state.playerTwoTotal})
-Result: ${state.result || 'in progress'}
-Winner: ${state.winnerName || '-'}`;
-        pvpHitButton.disabled = state.done;
-        pvpStandButton.disabled = state.done;
-        return;
-      }
+      latestPvpState = state;
 
-      pvpStateBox.textContent = `PVP Blackjack
-Player 1: ${state.playerOne.name}
-Player 2: ${state.playerTwo.name}
-Bet: ${state.color} ${state.bet}
-Turn: ${state.done ? '-' : state.activePlayerName}
-${state.playerOne.name} action: ${state.playerOneAction || '-'}
-${state.playerTwo.name} action: ${state.playerTwoAction || '-'}
-${state.playerOne.name}: ${state.playerOneCards.join(', ')} (${state.playerOneValue})
-${state.playerTwo.name}: ${state.playerTwoCards.join(', ')} (${state.playerTwoValue})
-Result: ${state.result || 'in progress'}
+      const isBaccarat = state.gameType === 'pvpbaccarat';
+      const gameLabel = getPvpGameLabel(state.gameType);
+      const firstSeat = isBaccarat ? 'PLAYER hand' : 'Player 1';
+      const secondSeat = isBaccarat ? 'BANKER hand' : 'Player 2';
+      const valueLabel = isBaccarat ? 'Total' : 'Value';
+      const playerOneValue = isBaccarat ? state.playerOneTotal : state.playerOneValue;
+      const playerTwoValue = isBaccarat ? state.playerTwoTotal : state.playerTwoValue;
+      const status = state.done ? 'Finished' : `${state.activePlayerName} to act`;
+
+      pvpStateBox.textContent = `${gameLabel}
+Status: ${status}
+Bet: ${CHIP_LABELS[state.color] || state.color} ${state.bet}
+Deck/Shoe left: ${state.remainingCards ?? '-'}
+
+${firstSeat}: ${state.playerOne.name}
+Action: ${formatPvpAction(state.playerOneAction)}
+Cards: ${formatPvpCards(state.playerOneCards)}
+${valueLabel}: ${playerOneValue ?? '-'}
+
+${secondSeat}: ${state.playerTwo.name}
+Action: ${formatPvpAction(state.playerTwoAction)}
+Cards: ${formatPvpCards(state.playerTwoCards)}
+${valueLabel}: ${playerTwoValue ?? '-'}
+
+Result: ${state.result || 'In progress'}
 Winner: ${state.winnerName || '-'}`;
-      pvpHitButton.disabled = state.done;
-      pvpStandButton.disabled = state.done;
+      updatePvpControls(state);
     }
 
     async function startFormulaHighLow() {
