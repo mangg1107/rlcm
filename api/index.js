@@ -2765,24 +2765,52 @@ ${playerOne.name}: ${chipStr(playerOne)}
 ${playerTwo.name}: ${chipStr(playerTwo)}`;
 }
 
+function formatPvpCardsForViewer(cards, valueLabel, value, revealed) {
+  if (!revealed) {
+    return `비공개 (${valueLabel}: -)`;
+  }
+
+  return `${cards.join(', ')} (${valueLabel}: ${value})`;
+}
+
+function makePvpPlayerPublicSection(viewer, state, session, viewerKey) {
+  const valueLabel = session.gameType === 'pvpbaccarat' ? 'Total' : 'Value';
+  const opponentKey = viewerKey === 'playerOne' ? 'playerTwo' : 'playerOne';
+  const viewerCards = state[`${viewerKey}Cards`] || [];
+  const opponentCards = state[`${opponentKey}Cards`] || [];
+  const viewerValue = session.gameType === 'pvpbaccarat'
+    ? state[`${viewerKey}Total`]
+    : state[`${viewerKey}Value`];
+  const opponentValue = session.gameType === 'pvpbaccarat'
+    ? state[`${opponentKey}Total`]
+    : state[`${opponentKey}Value`];
+  const revealOpponent = Boolean(state.done);
+
+  return `${viewer.name}에게 공개
+내 행동: ${state[`${viewerKey}Action`] || '-'}
+내 패: ${formatPvpCardsForViewer(viewerCards, valueLabel, viewerValue, true)}
+상대 행동: ${state[`${opponentKey}Action`] || '-'}
+상대 패: ${formatPvpCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent)}`;
+}
+
 function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
   const state = getPvpSessionState(session);
   const title = session.gameType === 'pvpbaccarat' ? 'PVP 바카라' : 'PVP 블랙잭';
-  const valueLabel = session.gameType === 'pvpbaccarat' ? 'Total' : 'Value';
-  const playerOneValue = session.gameType === 'pvpbaccarat' ? state.playerOneTotal : state.playerOneValue;
-  const playerTwoValue = session.gameType === 'pvpbaccarat' ? state.playerTwoTotal : state.playerTwoValue;
 
   return `${title}
+[공통 공개]
 플레이어 1: ${playerOne.name}
 플레이어 2: ${playerTwo.name}
 베팅: ${session.color} ${session.bet}
 턴: ${state.done ? '-' : state.activePlayerName}
-${playerOne.name} 행동: ${state.playerOneAction || '-'}
-${playerTwo.name} 행동: ${state.playerTwoAction || '-'}
-${playerOne.name} 패: ${state.playerOneCards.join(', ')} (${valueLabel}: ${playerOneValue})
-${playerTwo.name} 패: ${state.playerTwoCards.join(', ')} (${valueLabel}: ${playerTwoValue})
 결과: ${resultText}
-승자: ${state.winnerName || '-'}`;
+승자: ${state.winnerName || '-'}
+
+[플레이어 1 공개]
+${makePvpPlayerPublicSection(playerOne, state, session, 'playerOne')}
+
+[플레이어 2 공개]
+${makePvpPlayerPublicSection(playerTwo, state, session, 'playerTwo')}`;
 }
 
 function playRedBlack(player, color, bet, extra) {
