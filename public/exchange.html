@@ -114,6 +114,7 @@
     </div>
 
     <button onclick="setRates()">비율 적용</button>
+    <button onclick="randomizeRates()">환율 랜덤</button>
   </div>
 
   <script>
@@ -213,6 +214,29 @@
         document.getElementById('rateYellow').value = data.rates.yellow;
         document.getElementById('rateWhite').value = data.rates.white;
       }
+    }
+
+    function shuffleValues(values) {
+      const shuffled = [...values];
+
+      for (let index = shuffled.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+      }
+
+      return shuffled;
+    }
+
+    async function randomizeRates() {
+      const [red, blue, green, yellow, white] = shuffleValues([1, 5, 10, 20, 50]);
+
+      document.getElementById('rateRed').value = red;
+      document.getElementById('rateBlue').value = blue;
+      document.getElementById('rateGreen').value = green;
+      document.getElementById('rateYellow').value = yellow;
+      document.getElementById('rateWhite').value = white;
+
+      await setRates();
     }
 
     loadPlayers();

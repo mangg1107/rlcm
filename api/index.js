@@ -231,25 +231,25 @@ const PVP_SESSION_HEADER = [
   'result',
   'updatedAt'
 ];
-const FORMULA_HIGH_LOW_SESSION_SHEET_NAME = '수식하이로우세션';
+const FORMULA_HIGH_LOW_SESSION_SHEET_NAME = '콤비네이션베팅세션';
 const FORMULA_HIGH_LOW_SESSION_SHEET_REF = `'${FORMULA_HIGH_LOW_SESSION_SHEET_NAME}'`;
 const FORMULA_HIGH_LOW_SESSION_HEADER_RANGE = `${FORMULA_HIGH_LOW_SESSION_SHEET_REF}!A1:N1`;
 const FORMULA_HIGH_LOW_SESSION_RANGE = `${FORMULA_HIGH_LOW_SESSION_SHEET_REF}!A:N`;
 const FORMULA_HIGH_LOW_SESSION_ID_RANGE = `${FORMULA_HIGH_LOW_SESSION_SHEET_REF}!A:A`;
 const FORMULA_HIGH_LOW_SESSION_HEADER = [
   'id',
-  'playerOneId',
-  'playerTwoId',
+  'participantIds',
   'color',
   'bet',
-  'roundNumber',
-  'deck',
-  'discardedCards',
-  'playerOneState',
-  'playerTwoState',
+  'target',
+  'operatorCards',
+  'participantStates',
   'stage',
-  'winnerKey',
+  'winnerIds',
   'result',
+  'memo',
+  'pot',
+  'roundNumber',
   'updatedAt'
 ];
 
@@ -1567,36 +1567,36 @@ async function ensureFormulaHighLowSessionSheetHeader() {
 function parseFormulaHighLowSessionRow(row) {
   return {
     id: row[0] || '',
-    playerOneId: Number(row[1]),
-    playerTwoId: Number(row[2]),
-    color: row[3] || '',
-    bet: toChipAmount(row[4]),
-    roundNumber: readGameLimitValue(row[5]),
-    deck: parseJsonArray(row[6]),
-    discardedCards: parseJsonArray(row[7]),
-    playerOneState: parseJsonObject(row[8]),
-    playerTwoState: parseJsonObject(row[9]),
-    stage: row[10] || 'initial',
-    winnerKey: row[11] || '',
-    result: row[12] || ''
+    participantIds: parseIdArray(row[1]),
+    color: row[2] || '',
+    bet: toChipAmount(row[3]),
+    target: Number(row[4]),
+    operatorCards: parseJsonArray(row[5]),
+    participantStates: parseJsonArray(row[6]),
+    stage: row[7] || 'input',
+    winnerIds: parseIdArray(row[8]),
+    result: row[9] || '',
+    memo: row[10] || '',
+    pot: toChipAmount(row[11]),
+    roundNumber: readGameLimitValue(row[12])
   };
 }
 
 function formulaHighLowSessionToRow(session) {
   return [
     session.id,
-    session.playerOneId,
-    session.playerTwoId,
+    JSON.stringify(session.participantIds || []),
     session.color,
     session.bet,
-    Number.isFinite(Number(session.roundNumber)) ? session.roundNumber : '',
-    JSON.stringify(session.deck || []),
-    JSON.stringify(session.discardedCards || []),
-    JSON.stringify(session.playerOneState || {}),
-    JSON.stringify(session.playerTwoState || {}),
+    Number.isFinite(Number(session.target)) ? session.target : '',
+    JSON.stringify(session.operatorCards || []),
+    JSON.stringify(session.participantStates || []),
     session.stage || '',
-    session.winnerKey || '',
+    JSON.stringify(session.winnerIds || []),
     session.result || '',
+    session.memo || '',
+    session.pot || 0,
+    Number.isFinite(Number(session.roundNumber)) ? session.roundNumber : '',
     new Date().toISOString()
   ];
 }
@@ -4291,6 +4291,387 @@ ${makeFormulaHighLowCardsText(settlement.playerTwo.name, settlement.session.play
 ${settlement.memo || '-'}`;
 }
 
+const COMBINATION_OPERATOR_CARDS = ['+', '-', '*', '/', '^'];
+const COMBINATION_OPERATOR_LABELS = {
+  '+': '+',
+  '-': '-',
+  '*': '×',
+  '/': '÷',
+  '^': '^'
+};
+const COMBINATION_OPERATOR_ALIASES = {
+  '+': '+',
+  '＋': '+',
+  '-': '-',
+  '－': '-',
+  '*': '*',
+  '×': '*',
+  'x': '*',
+  'X': '*',
+  '/': '/',
+  '÷': '/',
+  '^': '^',
+  '＾': '^'
+};
+const COMBINATION_TARGET_MIN = 0;
+const COMBINATION_TARGET_MAX = 100;
+
+function drawCombinationNumberCard() {
+  return Math.floor(Math.random() * 11);
+}
+
+function createCombinationParticipantState(playerId) {
+  return {
+    playerId: Number(playerId),
+    numbers: Array.from({ length: 6 }, drawCombinationNumberCard),
+    submission: '',
+    evaluation: null
+  };
+}
+
+function normalizeCombinationTarget(value) {
+  const target = Number(value);
+
+  if (Number.isFinite(target)) {
+    return target;
+  }
+
+  return COMBINATION_TARGET_MIN + Math.floor(Math.random() * (COMBINATION_TARGET_MAX - COMBINATION_TARGET_MIN + 1));
+}
+
+function normalizeCombinationParticipantIds({ participantIds = [], playerId, opponentId } = {}) {
+  const sourceIds = Array.isArray(participantIds) && participantIds.length
+    ? participantIds
+    : [playerId, opponentId];
+
+  return [...new Set(sourceIds.map(Number))]
+    .filter((id) => Number.isFinite(id));
+}
+
+function normalizeCombinationOperator(operator) {
+  const normalized = COMBINATION_OPERATOR_ALIASES[String(operator || '')];
+
+  if (!normalized || !COMBINATION_OPERATOR_CARDS.includes(normalized)) {
+    throw createHttpError(400, `사용할 수 없는 기호입니다: ${operator}`);
+  }
+
+  return normalized;
+}
+
+function tokenizeCombinationExpression(expression) {
+  const tokens = [];
+  const text = String(expression || '');
+  let index = 0;
+
+  while (index < text.length) {
+    const char = text[index];
+
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+
+    if (/[0-9]/.test(char)) {
+      const match = text.slice(index).match(/^\d+/);
+      tokens.push({ type: 'number', value: Number(match[0]), raw: match[0] });
+      index += match[0].length;
+      continue;
+    }
+
+    if (COMBINATION_OPERATOR_ALIASES[char]) {
+      tokens.push({ type: 'operator', value: normalizeCombinationOperator(char), raw: char });
+      index += 1;
+      continue;
+    }
+
+    throw createHttpError(400, `수식에 사용할 수 없는 문자가 있습니다: ${char}`);
+  }
+
+  return tokens;
+}
+
+function parseCombinationExpression(expression) {
+  const tokens = tokenizeCombinationExpression(expression);
+
+  if (
+    tokens.length !== 5 ||
+    tokens[0]?.type !== 'number' ||
+    tokens[1]?.type !== 'operator' ||
+    tokens[2]?.type !== 'number' ||
+    tokens[3]?.type !== 'operator' ||
+    tokens[4]?.type !== 'number'
+  ) {
+    throw createHttpError(400, '수식은 숫자, 기호, 숫자, 기호, 숫자 형식이어야 합니다.');
+  }
+
+  return {
+    numbers: [tokens[0].value, tokens[2].value, tokens[4].value],
+    operators: [tokens[1].value, tokens[3].value],
+    tokens,
+    expression: tokens
+      .map((token) => token.type === 'operator' ? COMBINATION_OPERATOR_LABELS[token.value] : token.raw)
+      .join(' ')
+  };
+}
+
+function hasEnoughCombinationNumbers(availableNumbers, submittedNumbers) {
+  const available = numberCounts(availableNumbers);
+  const submitted = numberCounts(submittedNumbers);
+
+  return Object.keys(submitted).every((key) => (available[key] || 0) >= submitted[key]);
+}
+
+function applyCombinationOperator(left, operator, right) {
+  if (operator === '+') {
+    return left + right;
+  }
+
+  if (operator === '-') {
+    return left - right;
+  }
+
+  if (operator === '*') {
+    return left * right;
+  }
+
+  if (operator === '/') {
+    if (Math.abs(right) < FORMULA_EPSILON) {
+      throw createHttpError(400, '0으로 나눌 수 없습니다.');
+    }
+
+    return left / right;
+  }
+
+  if (operator === '^') {
+    return Math.pow(left, right);
+  }
+
+  throw createHttpError(400, `사용할 수 없는 기호입니다: ${operator}`);
+}
+
+function evaluateCombinationParsedExpression(parsed) {
+  const precedence = { '+': 1, '-': 1, '*': 2, '/': 2, '^': 3 };
+  const values = [];
+  const operators = [];
+
+  function applyTopOperator() {
+    const operator = operators.pop();
+    const right = values.pop();
+    const left = values.pop();
+
+    if (left === undefined || right === undefined) {
+      throw createHttpError(400, '수식 형식이 올바르지 않습니다.');
+    }
+
+    const value = applyCombinationOperator(left, operator, right);
+
+    if (!Number.isFinite(value)) {
+      throw createHttpError(400, '수식 결과가 너무 크거나 계산할 수 없습니다.');
+    }
+
+    values.push(value);
+  }
+
+  parsed.tokens.forEach((token) => {
+    if (token.type === 'number') {
+      values.push(token.value);
+      return;
+    }
+
+    while (
+      operators.length &&
+      (
+        precedence[operators[operators.length - 1]] > precedence[token.value] ||
+        (
+          precedence[operators[operators.length - 1]] === precedence[token.value] &&
+          token.value !== '^'
+        )
+      )
+    ) {
+      applyTopOperator();
+    }
+
+    operators.push(token.value);
+  });
+
+  while (operators.length) {
+    applyTopOperator();
+  }
+
+  if (values.length !== 1 || !Number.isFinite(values[0])) {
+    throw createHttpError(400, '수식 결과를 계산할 수 없습니다.');
+  }
+
+  return values[0];
+}
+
+function evaluateCombinationFormula(playerState, expression, target, playerLabel) {
+  try {
+    const parsed = parseCombinationExpression(expression);
+    const invalidNumbers = parsed.numbers.filter((value) => !Number.isInteger(value) || value < 0 || value > 10);
+
+    if (invalidNumbers.length) {
+      throw createHttpError(400, '숫자 카드는 0부터 10까지만 사용할 수 있습니다.');
+    }
+
+    if (!hasEnoughCombinationNumbers(playerState.numbers || [], parsed.numbers)) {
+      throw createHttpError(400, `보유 숫자 ${formatCombinationNumbers(playerState.numbers)} 중 3개만 사용할 수 있습니다.`);
+    }
+
+    const value = evaluateCombinationParsedExpression(parsed);
+    const distance = Math.abs(value - target);
+
+    return {
+      expression: parsed.expression,
+      value,
+      valueText: formatFormulaValue(value),
+      distance,
+      distanceText: formatFormulaValue(distance),
+      target
+    };
+  } catch (err) {
+    if (err.status) {
+      throw createHttpError(err.status, `${playerLabel}: ${err.message}`);
+    }
+
+    throw err;
+  }
+}
+
+function formatCombinationNumbers(numbers) {
+  return Array.isArray(numbers) && numbers.length ? numbers.join(', ') : '-';
+}
+
+function formatCombinationOperators() {
+  return COMBINATION_OPERATOR_CARDS.map((operator) => COMBINATION_OPERATOR_LABELS[operator]).join(', ');
+}
+
+function getCombinationPlayerName(playerId) {
+  return getPlayerById(playerId)?.name || `#${playerId}`;
+}
+
+function getCombinationParticipantState(session, playerId) {
+  return (session.participantStates || [])
+    .find((state) => Number(state.playerId) === Number(playerId));
+}
+
+function getCombinationWinnerIds(participantStates) {
+  const evaluatedStates = (participantStates || []).filter((state) => state.evaluation);
+  const bestDistance = evaluatedStates.reduce((best, state) => (
+    state.evaluation.distance < best ? state.evaluation.distance : best
+  ), Number.POSITIVE_INFINITY);
+
+  return evaluatedStates
+    .filter((state) => Math.abs(state.evaluation.distance - bestDistance) <= FORMULA_EPSILON)
+    .map((state) => Number(state.playerId));
+}
+
+function getCombinationWinnerNames(winnerIds) {
+  return (winnerIds || []).map(getCombinationPlayerName).join(', ') || '-';
+}
+
+function getCombinationBettingSessionState(session) {
+  const participants = (session.participantStates || []).map((state) => ({
+    id: Number(state.playerId),
+    name: getCombinationPlayerName(state.playerId),
+    numbers: state.numbers || [],
+    operators: COMBINATION_OPERATOR_CARDS.map((operator) => COMBINATION_OPERATOR_LABELS[operator]),
+    submission: state.submission || '',
+    evaluation: state.evaluation ? {
+      expression: state.evaluation.expression,
+      value: state.evaluation.valueText,
+      distance: state.evaluation.distanceText
+    } : null
+  }));
+
+  return {
+    id: session.id,
+    gameType: 'combinationbetting',
+    participantCount: participants.length,
+    participants,
+    color: session.color,
+    bet: session.bet,
+    pot: session.pot || session.bet * participants.length,
+    target: session.target,
+    operatorCards: COMBINATION_OPERATOR_CARDS.map((operator) => COMBINATION_OPERATOR_LABELS[operator]),
+    roundNumber: session.roundNumber,
+    stage: session.stage,
+    winnerIds: session.winnerIds || [],
+    winnerNames: getCombinationWinnerNames(session.winnerIds || []),
+    result: session.result || ''
+  };
+}
+
+function makeCombinationBettingStartLog(participants, session) {
+  const hands = (session.participantStates || [])
+    .map((state, index) => {
+      const player = participants.find((candidate) => Number(candidate.id) === Number(state.playerId));
+      return `${index + 1}. ${player?.name || getCombinationPlayerName(state.playerId)}: ${formatCombinationNumbers(state.numbers)}`;
+    })
+    .join('\n');
+
+  return `콤비네이션 베팅 시작
+목표 숫자: ${formatFormulaValue(session.target)}
+참가자: ${participants.map((player) => player.name).join(', ')}
+각자 베팅: ${session.color} ${session.bet}개
+총 팟: ${session.color} ${session.pot}개
+사용 가능 기호: ${formatCombinationOperators()}
+규칙: 보유 숫자 6개 중 3개와 기호 2개를 골라 숫자, 기호, 숫자, 기호, 숫자 형식의 수식을 제출합니다.
+
+숫자 카드
+${hands}`;
+}
+
+function makeCombinationBettingStartPublicLog(participants, session) {
+  return `콤비네이션 베팅 시작
+목표 숫자: ${formatFormulaValue(session.target)}
+참가자: ${participants.map((player) => player.name).join(', ')}
+각자 베팅: ${session.color} ${session.bet}개
+총 팟: ${session.color} ${session.pot}개
+사용 가능 기호: ${formatCombinationOperators()}
+제출 형식: 숫자, 기호, 숫자, 기호, 숫자`;
+}
+
+function makeCombinationBettingSettlementLog(participants, session, payouts) {
+  const results = (session.participantStates || [])
+    .map((state) => {
+      const player = participants.find((candidate) => Number(candidate.id) === Number(state.playerId));
+      const evaluation = state.evaluation;
+      const payout = payouts.get(Number(state.playerId)) || 0;
+
+      return `${player?.name || getCombinationPlayerName(state.playerId)}
+숫자: ${formatCombinationNumbers(state.numbers)}
+수식: ${evaluation?.expression || state.submission || '-'}
+결과값: ${evaluation?.valueText || '-'}
+거리: ${evaluation?.distanceText || '-'}
+지급: ${session.color} ${payout}개`;
+    })
+    .join('\n\n');
+
+  const balances = participants
+    .map((player) => `${player.name}: ${chipStr(player)}`)
+    .join('\n');
+
+  return `콤비네이션 베팅 정산
+목표 숫자: ${formatFormulaValue(session.target)}
+각자 베팅: ${session.color} ${session.bet}개
+총 팟: ${session.color} ${session.pot}개
+승자: ${getCombinationWinnerNames(session.winnerIds)}
+결과: ${session.result}
+
+${results}
+
+결과 메모
+${session.memo || '-'}
+
+현재
+${balances}`;
+}
+
+function makeCombinationBettingSettlementPublicLog(participants, session, payouts) {
+  return makeCombinationBettingSettlementLog(participants, session, payouts);
+}
+
 // =========================
 // 🌐 페이지 라우팅
 // =========================
@@ -4462,9 +4843,10 @@ app.post('/rates', async (req, res) => {
 
 app.post('/formula-high-low/start', async (req, res) => {
   try {
-    const { playerId, opponentId, color, amount, roundNumber } = req.body;
+    const { color, amount, roundNumber, targetNumber, target } = req.body;
     const bet = toChipAmount(amount);
     const parsedRoundNumber = toChipAmount(roundNumber);
+    const participantIds = normalizeCombinationParticipantIds(req.body);
 
     if (!validateColor(color)) {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
@@ -4474,49 +4856,50 @@ app.post('/formula-high-low/start', async (req, res) => {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
-    if (Number(playerId) === Number(opponentId)) {
-      return res.status(400).json({ error: '서로 다른 플레이어를 선택해야 합니다.' });
+    if (participantIds.length < 2) {
+      return res.status(400).json({ error: '콤비네이션 베팅은 2명 이상 참여해야 합니다.' });
     }
 
-    await loadPlayersByIds([playerId, opponentId]);
+    await loadPlayersByIds(participantIds);
 
-    const playerOne = getPlayerById(playerId);
-    const playerTwo = getPlayerById(opponentId);
+    const participants = participantIds.map(getPlayerById);
 
-    if (!playerOne || !playerTwo) {
+    if (participants.some((player) => !player)) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
 
-    if (playerOne[color] < bet || playerTwo[color] < bet) {
-      return res.status(400).json({ error: '두 플레이어 모두 베팅할 칩을 보유해야 합니다.' });
+    if (participants.some((player) => player[color] < bet)) {
+      return res.status(400).json({ error: '모든 참가자가 베팅할 칩을 보유해야 합니다.' });
     }
 
-    const deck = createFormulaHighLowDeck();
-    const discardedCards = [];
+    participants.forEach((player) => {
+      player[color] -= bet;
+    });
+
     const session = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      playerOneId: playerOne.id,
-      playerTwoId: playerTwo.id,
+      participantIds,
       color,
       bet,
+      target: normalizeCombinationTarget(targetNumber ?? target),
+      operatorCards: [...COMBINATION_OPERATOR_CARDS],
+      participantStates: participantIds.map(createCombinationParticipantState),
+      pot: bet * participantIds.length,
       roundNumber: Number.isFinite(parsedRoundNumber) && parsedRoundNumber > 0 ? parsedRoundNumber : null,
-      deck,
-      discardedCards,
-      playerOneState: createFormulaPlayerState(deck, discardedCards),
-      playerTwoState: createFormulaPlayerState(deck, discardedCards),
-      stage: 'initial',
-      winnerKey: '',
-      result: ''
+      stage: 'input',
+      winnerIds: [],
+      result: '',
+      memo: ''
     };
 
     const [log] = await Promise.all([
       addLog(
         'formulahighlow',
-        makeFormulaHighLowProgressLog(playerOne, playerTwo, session, '시작 / 히든 1장 + 오픈 2장'),
-        makeFormulaHighLowProgressPublicLog(playerOne, playerTwo, session, '시작 / 오픈 2장')
+        makeCombinationBettingStartLog(participants, session),
+        makeCombinationBettingStartPublicLog(participants, session)
       ),
       saveFormulaHighLowSession(session),
-      savePlayers([playerOne, playerTwo])
+      savePlayers(participants)
     ]);
 
     emitRealtime('update', players);
@@ -4525,14 +4908,14 @@ app.post('/formula-high-low/start', async (req, res) => {
 
     res.json({
       ok: true,
-      state: getFormulaHighLowSessionState(session, { revealHidden: true }),
+      state: getCombinationBettingSessionState(session),
       log: log.text,
       logs: [log],
-      players: serializePlayers([playerOne, playerTwo])
+      players: serializePlayers(participants)
     });
   } catch (err) {
     console.error(err);
-    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 시작 중 오류가 발생했습니다.' });
+    res.status(err.status || 500).json({ error: err.message || '콤비네이션 베팅 시작 중 오류가 발생했습니다.' });
   }
 });
 
@@ -4542,54 +4925,19 @@ app.post('/formula-high-low/final-card', async (req, res) => {
     const session = await getFormulaHighLowSession(sessionId);
 
     if (!session) {
-      return res.status(400).json({ error: '진행 중인 수식 하이 로우가 없습니다.' });
+      return res.status(400).json({ error: '진행 중인 콤비네이션 베팅이 없습니다.' });
     }
-
-    if (session.stage !== 'initial') {
-      return res.status(400).json({ error: '최종 오픈 카드를 받을 수 없는 단계입니다.' });
-    }
-
-    await loadPlayersByIds([session.playerOneId, session.playerTwoId]);
-    const playerOne = getPlayerById(session.playerOneId);
-    const playerTwo = getPlayerById(session.playerTwoId);
-
-    if (!playerOne || !playerTwo) {
-      await deleteFormulaHighLowSession(session.id);
-      return res.status(404).json({ error: '플레이어를 찾을 수 없어 세션을 종료했습니다.' });
-    }
-
-    dealFormulaFinalOpenSlot(session.playerOneState, session.deck, session.discardedCards);
-    dealFormulaFinalOpenSlot(session.playerTwoState, session.deck, session.discardedCards);
-    session.stage = 'final';
-
-    const progressLog = await addLog(
-      'formulahighlow',
-      makeFormulaHighLowProgressLog(playerOne, playerTwo, session, '최종 오픈 카드'),
-      makeFormulaHighLowProgressPublicLog(playerOne, playerTwo, session, '최종 오픈 카드')
-    );
-    const playerTwoInputLog = await addLog(
-      'formulahighlow',
-      makeFormulaHighLowPlayerInputLog(playerTwo, session.playerTwoState, session, 2)
-    );
-    const playerOneInputLog = await addLog(
-      'formulahighlow',
-      makeFormulaHighLowPlayerInputLog(playerOne, session.playerOneState, session, 1)
-    );
-    await saveFormulaHighLowSession(session);
-
-    emitRealtime('log', lastLogText);
-    emitRealtime('logs', logHistory);
 
     res.json({
       ok: true,
-      state: getFormulaHighLowSessionState(session, { revealHidden: true }),
-      log: playerOneInputLog.text,
-      logs: [playerOneInputLog, playerTwoInputLog, progressLog],
-      players: serializePlayers([playerOne, playerTwo])
+      state: getCombinationBettingSessionState(session),
+      log: '',
+      logs: [],
+      players: []
     });
   } catch (err) {
     console.error(err);
-    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 최종 카드 처리 중 오류가 발생했습니다.' });
+    res.status(err.status || 500).json({ error: err.message || '콤비네이션 베팅 상태 조회 중 오류가 발생했습니다.' });
   }
 });
 
@@ -4597,89 +4945,94 @@ async function handleFormulaHighLowResolve(req, res) {
   try {
     const {
       sessionId,
-      playerOneChoice,
-      playerTwoChoice,
-      playerOneHighFormula,
-      playerOneLowFormula,
-      playerTwoHighFormula,
-      playerTwoLowFormula,
+      submissions = [],
       memo = ''
     } = req.body;
     const session = await getFormulaHighLowSession(sessionId);
 
     if (!session) {
-      return res.status(400).json({ error: '진행 중인 수식 하이 로우가 없습니다.' });
+      return res.status(400).json({ error: '진행 중인 콤비네이션 베팅이 없습니다.' });
     }
 
-    if (session.stage !== 'final') {
-      return res.status(400).json({ error: '최종 오픈 카드까지 받은 뒤 정산할 수 있습니다.' });
+    if (session.stage !== 'input') {
+      return res.status(400).json({ error: '정산할 수 없는 단계입니다.' });
     }
 
-    await loadPlayersByIds([session.playerOneId, session.playerTwoId]);
+    await loadPlayersByIds(session.participantIds);
 
-    const playerOne = getPlayerById(session.playerOneId);
-    const playerTwo = getPlayerById(session.playerTwoId);
+    const participants = session.participantIds.map(getPlayerById);
 
-    if (!playerOne || !playerTwo) {
+    if (participants.some((player) => !player)) {
       await deleteFormulaHighLowSession(session.id);
       return res.status(404).json({ error: '플레이어를 찾을 수 없어 세션을 종료했습니다.' });
     }
 
-    const evaluation = evaluateFormulaHighLowSubmission(
-      session,
-      {
-        playerOne: playerOneChoice,
-        playerTwo: playerTwoChoice
-      },
-      {
-        playerOne: {
-          high: playerOneHighFormula,
-          low: playerOneLowFormula
-        },
-        playerTwo: {
-          high: playerTwoHighFormula,
-          low: playerTwoLowFormula
-        }
-      }
+    const submissionByPlayerId = new Map(
+      (Array.isArray(submissions) ? submissions : [])
+        .map((entry) => [Number(entry?.playerId), String(entry?.formula || '').trim()])
+        .filter(([playerId]) => Number.isFinite(playerId))
     );
-    const winnerKey = evaluation.winnerKey;
-    const pot = session.bet * 2;
+    const missingPlayers = session.participantIds
+      .filter((playerId) => !submissionByPlayerId.get(Number(playerId)))
+      .map(getCombinationPlayerName);
 
-    if (winnerKey === 'playerOne') {
-      playerOne[session.color] += session.bet;
-      playerTwo[session.color] -= session.bet;
-      session.result = `${playerOne.name} 승리`;
-    } else if (winnerKey === 'playerTwo') {
-      playerOne[session.color] -= session.bet;
-      playerTwo[session.color] += session.bet;
-      session.result = `${playerTwo.name} 승리`;
-    } else {
-      session.result = '무승부 / 팟 분배';
+    if (missingPlayers.length) {
+      return res.status(400).json({ error: `수식을 입력하지 않은 참가자가 있습니다: ${missingPlayers.join(', ')}` });
     }
 
-    session.stage = 'done';
-    session.winnerKey = winnerKey;
+    session.participantStates = (session.participantStates || []).map((state) => {
+      const player = participants.find((candidate) => Number(candidate.id) === Number(state.playerId));
+      const formula = submissionByPlayerId.get(Number(state.playerId));
+      const evaluation = evaluateCombinationFormula(
+        state,
+        formula,
+        session.target,
+        player?.name || getCombinationPlayerName(state.playerId)
+      );
 
-    const settlement = {
-      roundNumber: session.roundNumber,
-      color: session.color,
-      bet: session.bet,
-      pot,
-      winnerKey,
-      playerOne,
-      playerTwo,
-      session,
-      evaluation,
-      memo: String(memo || '').trim()
-    };
+      return {
+        ...state,
+        submission: formula,
+        evaluation
+      };
+    });
+
+    const winnerIds = getCombinationWinnerIds(session.participantStates);
+
+    if (!winnerIds.length) {
+      throw createHttpError(400, '승자를 계산할 수 없습니다.');
+    }
+
+    const payouts = new Map();
+    const baseShare = Math.floor(session.pot / winnerIds.length);
+    let remainder = session.pot - (baseShare * winnerIds.length);
+
+    winnerIds.forEach((winnerId) => {
+      const player = getPlayerById(winnerId);
+      const payout = baseShare + (remainder > 0 ? 1 : 0);
+
+      if (remainder > 0) {
+        remainder -= 1;
+      }
+
+      player[session.color] += payout;
+      payouts.set(Number(winnerId), payout);
+    });
+
+    session.stage = 'done';
+    session.winnerIds = winnerIds;
+    session.memo = String(memo || '').trim();
+    session.result = winnerIds.length === 1
+      ? `${getCombinationPlayerName(winnerIds[0])} 승리`
+      : `동점 / 팟 분배: ${getCombinationWinnerNames(winnerIds)}`;
 
     const [log] = await Promise.all([
       addLog(
         'formulahighlow',
-        makeFormulaHighLowLog(settlement),
-        makeFormulaHighLowPublicLog(settlement)
+        makeCombinationBettingSettlementLog(participants, session, payouts),
+        makeCombinationBettingSettlementPublicLog(participants, session, payouts)
       ),
-      savePlayers([playerOne, playerTwo]),
+      savePlayers(participants),
       deleteFormulaHighLowSession(session.id)
     ]);
 
@@ -4689,17 +5042,17 @@ async function handleFormulaHighLowResolve(req, res) {
 
     res.json({
       ok: true,
-      state: getFormulaHighLowSessionState(session, { revealHidden: true, evaluation }),
-      pot,
-      payout: winnerKey === 'tie' ? session.bet : pot,
-      winnerKey,
+      state: getCombinationBettingSessionState(session),
+      pot: session.pot,
+      payout: Object.fromEntries(payouts),
+      winnerIds,
       log: log.text,
       logs: [log],
-      players: serializePlayers([playerOne, playerTwo])
+      players: serializePlayers(participants)
     });
   } catch (err) {
     console.error(err);
-    res.status(err.status || 500).json({ error: err.message || '수식 하이 로우 정산 중 오류가 발생했습니다.' });
+    res.status(err.status || 500).json({ error: err.message || '콤비네이션 베팅 정산 중 오류가 발생했습니다.' });
   }
 }
 

@@ -32,7 +32,7 @@
         <option value="russianroulette">Russian Roulette</option>
         <option value="pvpbaccarat">PVP Baccarat</option>
         <option value="pvpblackjack">PVP Blackjack</option>
-        <option value="formulahighlow">Formula High Low 2P</option>
+        <option value="formulahighlow">Combination Betting</option>
       </select>
     </div>
 
@@ -168,61 +168,34 @@
       </div>
 
       <div class="form-row">
+        <label>Target number</label><br />
+        <input id="formulaTargetNumber" type="number" step="1" min="0" max="100" value="20" oninput="updateBalanceHint()" />
+      </div>
+
+      <div class="form-row">
+        <label>Participant count</label><br />
+        <input id="formulaParticipantCount" type="number" min="2" max="20" value="2" oninput="updateFormulaHighLowPlayers()" />
+      </div>
+
+      <div class="form-row">
         <label>Participants</label><br />
         <div id="formulaParticipantInputs"></div>
       </div>
 
-      <div class="form-row">
-        <label>Player 1 marker</label><br />
-        <select id="formulaPlayerOneChoice" onchange="updateFormulaRequiredInputs(); updateBalanceHint()">
-          <option value="HIGH">HIGH</option>
-          <option value="LOW">LOW</option>
-          <option value="SWING">SWING</option>
-        </select>
-      </div>
-
-      <div class="form-row">
-        <label>Player 2 marker</label><br />
-        <select id="formulaPlayerTwoChoice" onchange="updateFormulaRequiredInputs(); updateBalanceHint()">
-          <option value="HIGH">HIGH</option>
-          <option value="LOW">LOW</option>
-          <option value="SWING">SWING</option>
-        </select>
-      </div>
-
-      <div class="hint" id="formulaRequiredHint"></div>
-
-      <div class="form-row">
-        <label>Player 1 HIGH formula</label><br />
-        <input id="formulaPlayerOneHigh" type="text" placeholder="Example: (1 + 2) * 3 / 4" />
-      </div>
-
-      <div class="form-row">
-        <label>Player 1 LOW formula</label><br />
-        <input id="formulaPlayerOneLow" type="text" placeholder="Required for LOW or SWING" />
-      </div>
-
-      <div class="form-row">
-        <label>Player 2 HIGH formula</label><br />
-        <input id="formulaPlayerTwoHigh" type="text" placeholder="Example: sqrt(4) + 3 - 2 / 1" />
-      </div>
-
-      <div class="form-row">
-        <label>Player 2 LOW formula</label><br />
-        <input id="formulaPlayerTwoLow" type="text" placeholder="Required for LOW or SWING" />
-      </div>
+      <div class="hint" id="formulaRequiredHint">Each player gets 6 random number cards from 0-10 and the operators +, -, ×, ÷, ^. Submit exactly: number operator number operator number.</div>
+      <div id="formulaSubmissionInputs"></div>
 
       <div class="form-row">
         <label>Result memo</label><br />
-        <textarea id="formulaMemo" placeholder="하이/로우/스윙 선택, 히든 카드 공개, 수식, 결과값, 동점 판정 근거를 적어두세요."></textarea>
+        <textarea id="formulaMemo" placeholder="제출 순서, 협의 내용, 동점 처리 메모를 적어두세요."></textarea>
       </div>
 
-      <div class="hint">Deal final open creates copyable input logs for Player 1 and Player 2. Enter the formulas they submit, then resolve. Use sqrt(숫자), root(숫자), 루트(숫자), √숫자, ×, ÷, *, / as needed.</div>
+      <div class="hint">The closest result to the target wins the pot. Exact ties split the pot as evenly as possible.</div>
 
-      <button type="button" onclick="startFormulaHighLow()">Start Formula High Low</button>
-      <button id="formulaFinalButton" type="button" onclick="dealFormulaHighLowFinalCard()" disabled>Deal final open</button>
+      <button type="button" onclick="startFormulaHighLow()">Start Combination Betting</button>
+      <button id="formulaFinalButton" type="button" onclick="dealFormulaHighLowFinalCard()" disabled style="display:none;">Refresh state</button>
       <button id="formulaResolveButton" type="button" onclick="resolveFormulaHighLow()" disabled>Resolve submitted formulas</button>
-      <pre id="formulaHighLowState">No Formula High Low in progress.</pre>
+      <pre id="formulaHighLowState">No Combination Betting in progress.</pre>
     </div>
 
     <div id="normalGameFields">
@@ -536,64 +509,112 @@
     }
 
     function updateFormulaHighLowPlayers() {
-      renderTwoPlayerInputs('formulaParticipantInputs', 'formula-participant-select');
+      const participantInputs = document.getElementById('formulaParticipantInputs');
+      const participantCount = getFormulaParticipantCount();
+      const previousIds = [...participantInputs.querySelectorAll('.formula-participant-select')]
+        .map((select) => Number(select.value));
+      const usedIds = new Set();
+
+      participantInputs.innerHTML = '';
+
+      for (let index = 0; index < participantCount; index += 1) {
+        let selectedId = previousIds[index];
+
+        if (!players.some((p) => p.id === selectedId) || usedIds.has(selectedId)) {
+          selectedId = players.find((p) => !usedIds.has(p.id))?.id;
+        }
+
+        if (Number.isFinite(selectedId)) {
+          usedIds.add(selectedId);
+        }
+
+        const row = document.createElement('div');
+        const label = document.createElement('label');
+        const select = document.createElement('select');
+
+        row.className = 'participant-row';
+        label.textContent = `Player ${index + 1}`;
+        select.className = 'formula-participant-select';
+        select.onchange = updateBalanceHint;
+        select.innerHTML = '<option value="">Select player</option>' + players
+          .map((p) => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${formatPlayerOption(p)}</option>`)
+          .join('');
+        select.value = Number.isFinite(selectedId) ? String(selectedId) : '';
+
+        row.append(label, select);
+        participantInputs.appendChild(row);
+      }
+
       updateBalanceHint();
     }
 
+    function getFormulaParticipantCount() {
+      const count = Math.floor(Number(document.getElementById('formulaParticipantCount').value));
+      return Number.isFinite(count) && count >= 2 ? count : 2;
+    }
+
     function getFormulaParticipantIds() {
-      return getTwoPlayerParticipantIds('formula-participant-select');
+      return [...document.querySelectorAll('.formula-participant-select')]
+        .map((select) => (select.value === '' ? NaN : Number(select.value)));
     }
 
     function validateFormulaHighLowStart(participantIds, color, amount) {
-      return validateTwoPlayerParticipants(participantIds, color, amount, 'Formula High Low');
-    }
+      const participantCount = getFormulaParticipantCount();
+      const bet = getChipAmount(amount);
 
-    function getFormulaChoiceSides(choice) {
-      return choice === 'SWING' ? ['HIGH', 'LOW'] : [choice];
-    }
+      if (participantIds.length !== participantCount || participantIds.some((id) => !Number.isFinite(id))) {
+        alert(`Choose exactly ${participantCount} participants.`);
+        return false;
+      }
 
-    function getFormulaInputRequirements() {
-      const playerOneSides = getFormulaChoiceSides(document.getElementById('formulaPlayerOneChoice').value);
-      const playerTwoSides = getFormulaChoiceSides(document.getElementById('formulaPlayerTwoChoice').value);
+      if (new Set(participantIds).size !== participantIds.length) {
+        alert('Choose different players for every slot.');
+        return false;
+      }
 
-      return [
-        { id: 'formulaPlayerOneHigh', label: 'Player 1 HIGH', required: playerOneSides.includes('HIGH') },
-        { id: 'formulaPlayerOneLow', label: 'Player 1 LOW', required: playerOneSides.includes('LOW') },
-        { id: 'formulaPlayerTwoHigh', label: 'Player 2 HIGH', required: playerTwoSides.includes('HIGH') },
-        { id: 'formulaPlayerTwoLow', label: 'Player 2 LOW', required: playerTwoSides.includes('LOW') }
-      ];
+      if (!Number.isFinite(bet) || bet <= 0) {
+        alert('Bet amount is invalid.');
+        return false;
+      }
+
+      const participants = participantIds.map(getPlayerById);
+
+      if (participants.some((player) => !player)) {
+        alert('Could not find every participant.');
+        return false;
+      }
+
+      const shortPlayers = participants
+        .filter((player) => getChipBalance(player, color) < bet)
+        .map((player) => `${player.name}: ${CHIP_LABELS[color]} ${getChipBalance(player, color)}`);
+
+      if (shortPlayers.length) {
+        alert(`Not enough chips to start.\nBet: ${CHIP_LABELS[color]} ${bet}\n${shortPlayers.join('\n')}`);
+        return false;
+      }
+
+      return true;
     }
 
     function updateFormulaRequiredInputs() {
-      const requirements = getFormulaInputRequirements();
-      const requiredLabels = [];
-
-      requirements.forEach((field) => {
-        const input = document.getElementById(field.id);
-        const row = input.closest('.form-row');
-        input.required = field.required;
-        input.disabled = !field.required;
-        input.placeholder = field.required
-          ? `${field.label} formula`
-          : 'Not used for this marker';
-        row.style.opacity = field.required ? '1' : '0.55';
-
-        if (field.required) {
-          requiredLabels.push(field.label);
-        }
-      });
-
       document.getElementById('formulaRequiredHint').textContent =
-        `Required formulas: ${requiredLabels.join(', ') || '-'}`;
+        'Each player gets 6 random number cards from 0-10 and the operators +, -, ×, ÷, ^. Submit exactly: number operator number operator number.';
     }
 
     function validateFormulaSubmissionInputs() {
-      const missing = getFormulaInputRequirements()
-        .filter((field) => field.required && !document.getElementById(field.id).value.trim())
-        .map((field) => field.label);
+      const inputs = [...document.querySelectorAll('.formula-submission-input')];
+
+      if (!inputs.length) {
+        alert('Start Combination Betting before resolving.');
+        return false;
+      }
+
+      const missing = inputs
+        .filter((input) => !input.value.trim())
+        .map((input) => input.dataset.playerName || 'Player');
 
       if (missing.length) {
-        alert(`Fill required Formula High Low formulas:\n${missing.join('\n')}`);
+        alert(`Fill required Combination Betting formulas:\n${missing.join('\n')}`);
         return false;
       }
 
@@ -632,12 +653,14 @@
           const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
           return `${player.name} ${balance}개 ${status}`;
         });
-        const markerText = `P1 ${document.getElementById('formulaPlayerOneChoice').value} / P2 ${document.getElementById('formulaPlayerTwoChoice').value}`;
+        const target = document.getElementById('formulaTargetNumber').value || '-';
+        const pot = Number.isFinite(bet) && bet > 0 ? bet * selectedPlayers.length : 0;
 
         balanceHint.textContent = rows.length
-          ? `Formula High Low 2P (${CHIP_LABELS[color]}): pot ${(Number.isFinite(bet) && bet > 0 ? bet * 2 : 0)}개 / ${rows.join(' / ')} / ${markerText}`
+          ? `Combination Betting (${CHIP_LABELS[color]}): target ${target} / pot ${pot} / ${rows.join(' / ')}`
           : '';
         return;
+
       }
 
       if (gameType === 'russianroulette') {
@@ -1087,9 +1110,9 @@ Winner: ${state.winnerName || '-'}`;
       const participantIds = getFormulaParticipantIds();
       const payload = {
         ...getBasePayload(),
-        playerId: participantIds[0],
-        opponentId: participantIds[1],
-        roundNumber: Number(document.getElementById('formulaRoundNumber').value)
+        participantIds,
+        roundNumber: Number(document.getElementById('formulaRoundNumber').value),
+        targetNumber: Number(document.getElementById('formulaTargetNumber').value)
       };
 
       if (!validateFormulaHighLowStart(participantIds, payload.color, payload.amount)) {
@@ -1105,7 +1128,7 @@ Winner: ${state.winnerName || '-'}`;
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || 'Failed to settle Formula High Low.');
+        alert(data.error || 'Failed to start Combination Betting.');
         return;
       }
 
@@ -1127,7 +1150,7 @@ Winner: ${state.winnerName || '-'}`;
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || 'Failed to deal final Formula High Low card.');
+        alert(data.error || 'Failed to refresh Combination Betting.');
         return;
       }
 
@@ -1138,7 +1161,7 @@ Winner: ${state.winnerName || '-'}`;
 
     async function resolveFormulaHighLow() {
       if (!activeFormulaHighLowSessionId) {
-        alert('No Formula High Low session in progress.');
+        alert('No Combination Betting session in progress.');
         return;
       }
 
@@ -1151,12 +1174,7 @@ Winner: ${state.winnerName || '-'}`;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: activeFormulaHighLowSessionId,
-          playerOneChoice: document.getElementById('formulaPlayerOneChoice').value,
-          playerTwoChoice: document.getElementById('formulaPlayerTwoChoice').value,
-          playerOneHighFormula: document.getElementById('formulaPlayerOneHigh').value,
-          playerOneLowFormula: document.getElementById('formulaPlayerOneLow').value,
-          playerTwoHighFormula: document.getElementById('formulaPlayerTwoHigh').value,
-          playerTwoLowFormula: document.getElementById('formulaPlayerTwoLow').value,
+          submissions: getFormulaSubmissions(),
           memo: document.getElementById('formulaMemo').value
         })
       });
@@ -1164,7 +1182,7 @@ Winner: ${state.winnerName || '-'}`;
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || 'Failed to resolve Formula High Low.');
+        alert(data.error || 'Failed to resolve Combination Betting.');
         return;
       }
 
@@ -1172,83 +1190,81 @@ Winner: ${state.winnerName || '-'}`;
       renderLogs(data.logs);
       mergePlayers(data.players);
       activeFormulaHighLowSessionId = null;
-      alert(data.state.result || 'Formula High Low resolved.');
+      alert(data.state.result || 'Combination Betting resolved.');
     }
 
     function clearFormulaHighLowFormulaInputs() {
-      [
-        'formulaPlayerOneHigh',
-        'formulaPlayerOneLow',
-        'formulaPlayerTwoHigh',
-        'formulaPlayerTwoLow'
-      ].forEach((id) => {
-        document.getElementById(id).value = '';
+      document.getElementById('formulaSubmissionInputs').innerHTML = '';
+      document.getElementById('formulaMemo').value = '';
+    }
+
+    function getFormulaSubmissions() {
+      return [...document.querySelectorAll('.formula-submission-input')]
+        .map((input) => ({
+          playerId: Number(input.dataset.playerId),
+          formula: input.value
+        }));
+    }
+
+    function renderFormulaSubmissionInputs(state) {
+      const container = document.getElementById('formulaSubmissionInputs');
+
+      container.innerHTML = '';
+
+      (state.participants || []).forEach((participant) => {
+        const row = document.createElement('div');
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        const hint = document.createElement('div');
+
+        row.className = 'form-row';
+        label.textContent = `${participant.name} formula`;
+        input.type = 'text';
+        input.className = 'formula-submission-input';
+        input.dataset.playerId = participant.id;
+        input.dataset.playerName = participant.name;
+        input.placeholder = 'Example: 10 ^ 2 - 7';
+        input.value = participant.submission || '';
+        input.disabled = state.stage !== 'input';
+        hint.className = 'hint';
+        hint.textContent = `Numbers: ${(participant.numbers || []).join(', ')} / Operators: ${(participant.operators || []).join(', ')}`;
+
+        row.append(label, document.createElement('br'), input, hint);
+        container.appendChild(row);
       });
     }
 
-    function formatFormulaEval(evalState, side) {
-      const result = evalState?.[side];
-      return result
-        ? `${result.expression} = ${result.value} (${result.distance})`
-        : '-';
-    }
-
-    function getFormulaWinnerLabelFromKey(state, key) {
-      if (key === 'playerOne') {
-        return state.playerOne.name;
-      }
-
-      if (key === 'playerTwo') {
-        return state.playerTwo.name;
-      }
-
-      if (key === 'tie') {
-        return 'Split';
-      }
-
-      return '-';
-    }
-
     function renderFormulaHighLowState(state) {
-      const p1 = state.playerOneState;
-      const p2 = state.playerTwoState;
-      const p1Eval = state.evaluation?.playerOne;
-      const p2Eval = state.evaluation?.playerTwo;
-      const choiceText = state.evaluation?.choices
-        ? `P1 ${state.evaluation.choices.playerOne} / P2 ${state.evaluation.choices.playerTwo}`
-        : `P1 ${document.getElementById('formulaPlayerOneChoice').value} / P2 ${document.getElementById('formulaPlayerTwoChoice').value}`;
+      const participantText = (state.participants || [])
+        .map((participant, index) => {
+          const evaluation = participant.evaluation
+            ? `${participant.evaluation.expression} = ${participant.evaluation.value} (distance ${participant.evaluation.distance})`
+            : 'waiting for formula';
 
-      formulaHighLowStateBox.textContent = `Formula High Low 2P
+          return `${index + 1}. ${participant.name}
+Numbers: ${(participant.numbers || []).join(', ') || '-'}
+Operators: ${(participant.operators || []).join(', ') || '-'}
+Formula: ${participant.submission || '-'}
+Evaluation: ${evaluation}`;
+        })
+        .join('\n\n');
+
+      formulaHighLowStateBox.textContent = `Combination Betting
 Round: ${state.roundNumber || '-'}
 Stage: ${state.stage}
-Markers: ${choiceText}
-Player 1: ${state.playerOne.name}
-Hidden: ${p1.hidden}
-Open: ${p1.openSlots.join(', ') || '-'}
-Numbers: ${(p1.numbers || []).join(', ') || '-'}
-Root: ${p1.rootCount} / Multiply: ${p1.multiplyCount}
-High: ${formatFormulaEval(p1Eval, 'high')}
-Low: ${formatFormulaEval(p1Eval, 'low')}
-
-Player 2: ${state.playerTwo.name}
-Hidden: ${p2.hidden}
-Open: ${p2.openSlots.join(', ') || '-'}
-Numbers: ${(p2.numbers || []).join(', ') || '-'}
-Root: ${p2.rootCount} / Multiply: ${p2.multiplyCount}
-High: ${formatFormulaEval(p2Eval, 'high')}
-Low: ${formatFormulaEval(p2Eval, 'low')}
-
+Target: ${state.target}
 Bet: ${state.color} ${state.bet}
 Pot: ${state.color} ${state.pot}
-Discarded symbols: ${state.discardedCards.join(', ') || '-'}
-Remaining deck: ${state.remainingCards}
-High winner: ${getFormulaWinnerLabelFromKey(state, state.evaluation?.highWinner)}
-Low winner: ${getFormulaWinnerLabelFromKey(state, state.evaluation?.lowWinner)}
-Winner: ${state.winnerName || '-'}
+Operators: ${(state.operatorCards || []).join(', ')}
+
+${participantText || 'No participants'}
+
+Winner: ${state.winnerNames || '-'}
 Result: ${state.result || 'in progress'}`;
 
-      formulaFinalButton.disabled = state.stage !== 'initial';
-      formulaResolveButton.disabled = state.stage !== 'final';
+      renderFormulaSubmissionInputs(state);
+      formulaFinalButton.disabled = true;
+      formulaResolveButton.disabled = state.stage !== 'input';
     }
 
     async function startRussianRoulette() {
