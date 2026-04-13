@@ -4888,7 +4888,16 @@ ${balances}`;
 }
 
 function makeCombinationBettingSettlementPublicLog(participants, session, payouts) {
-  return makeCombinationBettingSettlementLog(participants, session, payouts);
+  const totalPaid = [...payouts.values()].reduce((sum, amount) => sum + amount, 0);
+  const discarded = Math.max(0, session.pot - totalPaid);
+
+  return `콤비네이션 베팅 정산
+목표 숫자: ${formatFormulaValue(session.target)}
+각자 베팅: ${session.color} ${session.bet}개
+총 팟: ${session.color} ${session.pot}개
+지급 합계: ${session.color} ${totalPaid}개
+버림: ${session.color} ${discarded}개
+승자: ${getCombinationWinnerNames(session.winnerIds)}`;
 }
 
 // =========================
