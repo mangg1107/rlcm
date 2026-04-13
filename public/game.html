@@ -1683,15 +1683,19 @@ Status: ${state.done ? state.result : 'in progress'}`;
       const block = document.createElement('div');
       const header = document.createElement('div');
       const label = document.createElement('strong');
+      const copyButton = document.createElement('button');
       const pre = document.createElement('pre');
 
       wrapper.className = 'log-public-sections';
       block.className = 'log-public-section';
       header.className = 'log-public-section-head';
       label.textContent = labelText;
+      copyButton.type = 'button';
+      copyButton.textContent = '로그 복사';
+      copyButton.onclick = () => copyText(text);
       pre.textContent = text;
 
-      header.appendChild(label);
+      header.append(label, copyButton);
       block.append(header, pre);
       wrapper.appendChild(block);
       container.appendChild(wrapper);
