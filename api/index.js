@@ -62,13 +62,18 @@ const GAME_LIMIT_RESET_TIME_ZONE = 'Asia/Seoul';
 const GAME_LIMIT_RESET_KEY = 'lastGameLimitResetDate';
 const DEFAULT_RATES = { red: 1, blue: 3, green: 5, yellow: 10, white: 15 };
 const READ_CACHE_TTL_MS = 3000;
+const ROW_NUMBER_CACHE_TTL_MS = 60000;
 
 let rates = { ...DEFAULT_RATES };
 let playersLoadedAt = 0;
 let playersCacheInvalidatedAt = 0;
 let playersLoadPromise = null;
+let playerRowNumbers = new Map();
+let playerRowNumbersLoadedAt = 0;
 let ratesLoadedAt = 0;
 let ratesLoadPromise = null;
+let dailyGameLimitResetDate = '';
+let dailyGameLimitResetPromise = null;
 
 // =========================
 // 🔑 Google Sheets 설정
@@ -354,6 +359,30 @@ function isReadCacheFresh(loadedAt) {
   return loadedAt > 0 && Date.now() - loadedAt < READ_CACHE_TTL_MS;
 }
 
+function isRowNumberCacheFresh() {
+  return playerRowNumbersLoadedAt > 0 && Date.now() - playerRowNumbersLoadedAt < ROW_NUMBER_CACHE_TTL_MS;
+}
+
+function rememberPlayerRowNumber(id, rowNumber) {
+  const playerId = Number(id);
+  const row = Number(rowNumber);
+
+  if (Number.isFinite(playerId) && Number.isFinite(row) && row > 1) {
+    playerRowNumbers.set(playerId, row);
+  }
+}
+
+function rememberPlayerRowNumbers(nextPlayers, options = {}) {
+  if (options.replace) {
+    playerRowNumbers = new Map();
+  }
+
+  nextPlayers.forEach((player) => {
+    rememberPlayerRowNumber(player.id, player._rowNumber);
+  });
+  playerRowNumbersLoadedAt = Date.now();
+}
+
 function invalidatePlayersCache() {
   playersLoadedAt = 0;
   playersCacheInvalidatedAt = Date.now();
@@ -578,18 +607,37 @@ async function resetDailyGameLimitRange() {
 }
 
 async function ensureDailyGameLimitReset() {
-  await ensurePlayerSheetHeader();
-
   const today = getKoreaDateKey();
-  const lastResetDate = await readSettingValue(GAME_LIMIT_RESET_KEY);
 
-  if (lastResetDate === today) {
+  if (dailyGameLimitResetDate === today) {
     return false;
   }
 
-  await resetDailyGameLimitRange();
-  await saveSettingValue(GAME_LIMIT_RESET_KEY, today);
-  return true;
+  if (dailyGameLimitResetPromise) {
+    return dailyGameLimitResetPromise;
+  }
+
+  dailyGameLimitResetPromise = (async () => {
+    const [lastResetDate] = await Promise.all([
+      readSettingValue(GAME_LIMIT_RESET_KEY),
+      ensurePlayerSheetHeader()
+    ]);
+
+    if (lastResetDate === today) {
+      dailyGameLimitResetDate = today;
+      return false;
+    }
+
+    await resetDailyGameLimitRange();
+    await saveSettingValue(GAME_LIMIT_RESET_KEY, today);
+    dailyGameLimitResetDate = today;
+    return true;
+  })()
+    .finally(() => {
+      dailyGameLimitResetPromise = null;
+    });
+
+  return dailyGameLimitResetPromise;
 }
 
 async function loadSheet() {
@@ -605,10 +653,12 @@ async function loadSheet() {
 
   if (rows.length <= 1) {
     players = [];
+    rememberPlayerRowNumbers(players, { replace: true });
     return;
   }
 
   players = rows.slice(1).map((row, index) => parsePlayerRow(row, index + 2));
+  rememberPlayerRowNumbers(players, { replace: true });
 }
 
 async function loadSheetCached() {
@@ -658,7 +708,7 @@ async function saveSheet() {
   invalidatePlayersCache();
 }
 
-async function getPlayerRowNumbers(playerIds) {
+async function getPlayerRowNumbers(playerIds, options = {}) {
   await ensurePlayerSheetHeader();
 
   const ids = uniquePlayerIds(playerIds);
@@ -669,18 +719,39 @@ async function getPlayerRowNumbers(playerIds) {
     return rowNumbers;
   }
 
+  if (!options.forceRefresh && isRowNumberCacheFresh()) {
+    ids.forEach((id) => {
+      const rowNumber = playerRowNumbers.get(id);
+
+      if (rowNumber) {
+        rowNumbers.set(id, rowNumber);
+      }
+    });
+
+    if (rowNumbers.size === ids.length) {
+      return rowNumbers;
+    }
+  }
+
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: PLAYER_ID_RANGE
   });
 
+  playerRowNumbers = new Map();
   (res.data.values || []).forEach((row, index) => {
     const id = Number(row[0]);
 
-    if (idSet.has(id) && !rowNumbers.has(id)) {
-      rowNumbers.set(id, index + 1);
+    if (index > 0 && Number.isFinite(id)) {
+      const rowNumber = index + 1;
+      playerRowNumbers.set(id, rowNumber);
+
+      if (idSet.has(id) && !rowNumbers.has(id)) {
+        rowNumbers.set(id, rowNumber);
+      }
     }
   });
+  playerRowNumbersLoadedAt = Date.now();
 
   return rowNumbers;
 }
@@ -697,8 +768,9 @@ async function loadPlayersByIds(playerIds) {
 
   await ensureDailyGameLimitReset();
 
-  const rowNumbers = await getPlayerRowNumbers(ids);
-  const targets = ids
+  const canUseCachedRowNumbers = isRowNumberCacheFresh() && ids.every((id) => playerRowNumbers.get(id));
+  let rowNumbers = await getPlayerRowNumbers(ids);
+  let targets = ids
     .map((id) => ({ id, rowNumber: rowNumbers.get(id) }))
     .filter((target) => target.rowNumber);
 
@@ -707,14 +779,28 @@ async function loadPlayersByIds(playerIds) {
     return players;
   }
 
-  const res = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId: SPREADSHEET_ID,
-    ranges: targets.map((target) => sheetRowRange(PLAYER_SHEET_REF, PLAYER_END_COLUMN, target.rowNumber))
-  });
+  async function readTargetPlayers() {
+    const res = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: SPREADSHEET_ID,
+      ranges: targets.map((target) => sheetRowRange(PLAYER_SHEET_REF, PLAYER_END_COLUMN, target.rowNumber))
+    });
 
-  players = (res.data.valueRanges || [])
-    .map((valueRange, index) => parsePlayerRow((valueRange.values || [])[0] || [], targets[index].rowNumber))
-    .filter((player) => Number.isFinite(player.id) && targets.some((target) => target.id === player.id));
+    return (res.data.valueRanges || [])
+      .map((valueRange, index) => parsePlayerRow((valueRange.values || [])[0] || [], targets[index].rowNumber))
+      .filter((player) => Number.isFinite(player.id) && targets.some((target) => target.id === player.id));
+  }
+
+  players = await readTargetPlayers();
+
+  if (canUseCachedRowNumbers && players.length < targets.length) {
+    rowNumbers = await getPlayerRowNumbers(ids, { forceRefresh: true });
+    targets = ids
+      .map((id) => ({ id, rowNumber: rowNumbers.get(id) }))
+      .filter((target) => target.rowNumber);
+    players = targets.length ? await readTargetPlayers() : [];
+  }
+
+  rememberPlayerRowNumbers(players);
 
   return players;
 }
@@ -764,6 +850,10 @@ async function savePlayers(changedPlayers) {
     }
   });
 
+  data.forEach((entry, index) => {
+    const rowNumber = getRowNumberFromRange(entry.range);
+    rememberPlayerRowNumber(targetPlayers[index].id, rowNumber);
+  });
   invalidatePlayersCache();
 }
 
@@ -5418,14 +5508,15 @@ app.post('/blackjack/start', async (req, res) => {
 app.post('/blackjack/action', async (req, res) => {
   try {
     const { playerId, action } = req.body;
-    await loadPlayersByIds([playerId]);
+    const [session] = await Promise.all([
+      getBlackjackSession(playerId),
+      loadPlayersByIds([playerId])
+    ]);
     const player = getPlayerById(playerId);
 
     if (!player) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
-
-    const session = await getBlackjackSession(playerId);
 
     if (!session) {
       return res.status(400).json({ error: '진행 중인 블랙잭이 없습니다.' });
@@ -5585,15 +5676,16 @@ app.post('/baccarat/start', async (req, res) => {
 app.post('/baccarat/action', async (req, res) => {
   try {
     const { playerId, action } = req.body;
-    await loadPlayersByIds([playerId]);
+    const [session] = await Promise.all([
+      getBaccaratSession(playerId),
+      loadPlayersByIds([playerId])
+    ]);
     const player = getPlayerById(playerId);
     const nextAction = String(action || '').toLowerCase();
 
     if (!player) {
       return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
     }
-
-    const session = await getBaccaratSession(playerId);
 
     if (!session) {
       return res.status(400).json({ error: '진행 중인 바카라가 없습니다.' });
@@ -5931,7 +6023,10 @@ app.post('/exchange', async (req, res) => {
 app.post('/convert', async (req, res) => {
   try {
     const { playerId, fromColor, toColor, amount } = req.body;
-    await loadPlayersByIds([playerId]);
+    await Promise.all([
+      loadPlayersByIds([playerId]),
+      loadRates()
+    ]);
     const player = getPlayerById(playerId);
     const convertAmount = toChipAmount(amount);
 
@@ -5954,8 +6049,6 @@ app.post('/convert', async (req, res) => {
     if (player[fromColor] < convertAmount) {
       return res.status(400).json({ error: '보유 칩이 부족합니다.' });
     }
-
-    await loadRates();
 
     const totalValue = convertAmount * rates[fromColor];
     const result = Math.floor(totalValue / rates[toColor]);

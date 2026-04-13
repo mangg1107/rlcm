@@ -186,14 +186,20 @@
     }
 
     async function reloadPlayers() {
-      const teamRes = await fetch('/api/teams');
-      const teamData = await teamRes.json();
+      const [teamRes, logsRes] = await Promise.all([
+        fetch('/api/teams'),
+        fetch('/api/logs?limit=100')
+      ]);
+      const [teamData, logs] = await Promise.all([
+        teamRes.json(),
+        logsRes.json()
+      ]);
+
       renderChipValues(teamData.players || []);
       renderLimits(teamData.players || []);
       renderTeams(teamData.teams || []);
 
-      const logsRes = await fetch('/api/logs?limit=100');
-      allLogs = await logsRes.json();
+      allLogs = logs;
       renderLogs();
     }
 
