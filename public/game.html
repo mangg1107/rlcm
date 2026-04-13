@@ -167,10 +167,7 @@
         <input id="formulaRoundNumber" type="number" min="1" step="1" value="1" oninput="updateBalanceHint()" />
       </div>
 
-      <div class="form-row">
-        <label>Target number</label><br />
-        <input id="formulaTargetNumber" type="number" step="1" min="0" max="100" value="20" oninput="updateBalanceHint()" />
-      </div>
+      <div class="hint">Target number is randomly generated from 0 to 100 when Combination Betting starts.</div>
 
       <div class="form-row">
         <label>Participant count</label><br />
@@ -664,11 +661,10 @@
           const status = Number.isFinite(bet) && bet > 0 && balance < bet ? '부족' : '가능';
           return `${player.name} ${balance}개 ${status}`;
         });
-        const target = document.getElementById('formulaTargetNumber').value || '-';
         const pot = Number.isFinite(bet) && bet > 0 ? bet * selectedPlayers.length : 0;
 
         balanceHint.textContent = rows.length
-          ? `Combination Betting (${CHIP_LABELS[color]}): target ${target} / pot ${pot} / ${rows.join(' / ')}`
+          ? `Combination Betting (${CHIP_LABELS[color]}): random target / pot ${pot} / ${rows.join(' / ')}`
           : '';
         return;
 
@@ -1122,8 +1118,7 @@ Winner: ${state.winnerName || '-'}`;
       const payload = {
         ...getBasePayload(),
         participantIds,
-        roundNumber: Number(document.getElementById('formulaRoundNumber').value),
-        targetNumber: Number(document.getElementById('formulaTargetNumber').value)
+        roundNumber: Number(document.getElementById('formulaRoundNumber').value)
       };
 
       if (!validateFormulaHighLowStart(participantIds, payload.color, payload.amount)) {
@@ -1519,6 +1514,100 @@ Status: ${state.done ? state.result : 'in progress'}`;
       return allLogs;
     }
 
+    function isGroupedGameLogType(type) {
+      return ['baccarat', 'blackjack', 'russianroulette'].includes(type);
+    }
+
+    function getLegacyGameLogKey(log) {
+      if (!isGroupedGameLogType(log.type)) {
+        return '';
+      }
+
+      if (log.type === 'russianroulette') {
+        return '';
+      }
+
+      const text = String(log.text || log.publicText || '');
+      const player = text.match(/^플레이어:\s*(.+)$/m)?.[1] || '';
+      const bet = text.match(/^베팅:\s*(.+)$/m)?.[1] || '';
+
+      return player && bet ? `${log.type}:${player}:${bet}` : '';
+    }
+
+    function areLogsNear(first, second) {
+      const firstTime = Date.parse(first.createdAt || '');
+      const secondTime = Date.parse(second.createdAt || '');
+
+      if (!Number.isFinite(firstTime) || !Number.isFinite(secondTime)) {
+        return false;
+      }
+
+      return Math.abs(firstTime - secondTime) <= 60 * 60 * 1000;
+    }
+
+    function groupLogsForRender(logs) {
+      const groups = [];
+      const groupsByKey = new Map();
+
+      logs.forEach((log) => {
+        const groupKey = isGroupedGameLogType(log.type) && log.groupId
+          ? `${log.type}:${log.groupId}`
+          : '';
+
+        if (groupKey) {
+          let group = groupsByKey.get(groupKey);
+
+          if (!group) {
+            group = { key: groupKey, legacyKey: getLegacyGameLogKey(log), type: log.type, logs: [] };
+            groupsByKey.set(groupKey, group);
+            groups.push(group);
+          }
+
+          if (!group.legacyKey) {
+            group.legacyKey = getLegacyGameLogKey(log);
+          }
+
+          group.logs.push(log);
+          return;
+        }
+
+        const legacyKey = getLegacyGameLogKey(log);
+        const previousGroup = groups[groups.length - 1];
+
+        if (
+          legacyKey &&
+          previousGroup?.legacyKey === legacyKey &&
+          areLogsNear(log, previousGroup.logs[previousGroup.logs.length - 1])
+        ) {
+          previousGroup.logs.push(log);
+          return;
+        }
+
+        groups.push({
+          key: log.id || `${log.type}-${log.createdAt}-${log.text}`,
+          legacyKey,
+          type: log.type,
+          logs: [log]
+        });
+      });
+
+      return groups;
+    }
+
+    function getLogsInDisplayOrder(group) {
+      return [...group.logs].sort((left, right) => {
+        const leftTime = Date.parse(left.createdAt || '');
+        const rightTime = Date.parse(right.createdAt || '');
+        return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+      });
+    }
+
+    function getGroupedCopyText(group) {
+      return getLogsInDisplayOrder(group)
+        .map((log) => log.publicText || log.text)
+        .join('\n\n');
+    }
+
     function parseLogSections(text) {
       const matches = [...String(text || '').matchAll(/^\[(공통 공개|플레이어 \d+ 공개|플레이어 \d+ 제출 정보|제출 정보)\]\s*$/gm)];
 
@@ -1664,26 +1753,32 @@ Status: ${state.done ? state.result : 'in progress'}`;
 
     function renderLogs(nextLogs) {
       const logs = mergeLogs(nextLogs);
+      const groups = groupLogsForRender(logs);
       logList.innerHTML = '';
 
-      if (!logs.length) {
+      if (!groups.length) {
         logList.textContent = 'No progress logs yet.';
         return;
       }
 
-      logs.forEach((log) => {
+      groups.forEach((group) => {
         const item = document.createElement('div');
         const button = document.createElement('button');
         const title = document.createElement('strong');
+        const latestLog = group.logs[0];
 
         item.className = 'log-item';
-        title.textContent = `${log.type} | ${new Date(log.createdAt).toLocaleString()}`;
+        title.textContent = `${group.type} | ${new Date(latestLog.createdAt).toLocaleString()}${group.logs.length > 1 ? ` | ${group.logs.length} logs` : ''}`;
         button.type = 'button';
-        button.textContent = 'Copy this log';
-        button.onclick = () => copyText(log.publicText || log.text);
+        button.textContent = group.logs.length > 1 ? 'Copy this game' : 'Copy this log';
+        button.onclick = () => copyText(getGroupedCopyText(group));
 
         item.append(title, document.createTextNode(' '), button);
-        appendLogBody(item, log.publicText || log.text, log.type);
+
+        getLogsInDisplayOrder(group).forEach((log) => {
+          appendLogBody(item, log.publicText || log.text, log.type);
+        });
+
         logList.appendChild(item);
       });
     }

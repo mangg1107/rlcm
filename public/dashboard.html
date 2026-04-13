@@ -270,6 +270,100 @@
       return allLogs;
     }
 
+    function isGroupedGameLogType(type) {
+      return ['baccarat', 'blackjack', 'russianroulette'].includes(type);
+    }
+
+    function getLegacyGameLogKey(log) {
+      if (!isGroupedGameLogType(log.type)) {
+        return '';
+      }
+
+      if (log.type === 'russianroulette') {
+        return '';
+      }
+
+      const text = String(log.text || log.publicText || '');
+      const player = text.match(/^플레이어:\s*(.+)$/m)?.[1] || '';
+      const bet = text.match(/^베팅:\s*(.+)$/m)?.[1] || '';
+
+      return player && bet ? `${log.type}:${player}:${bet}` : '';
+    }
+
+    function areLogsNear(first, second) {
+      const firstTime = Date.parse(first.createdAt || '');
+      const secondTime = Date.parse(second.createdAt || '');
+
+      if (!Number.isFinite(firstTime) || !Number.isFinite(secondTime)) {
+        return false;
+      }
+
+      return Math.abs(firstTime - secondTime) <= 60 * 60 * 1000;
+    }
+
+    function groupLogsForRender(logs) {
+      const groups = [];
+      const groupsByKey = new Map();
+
+      logs.forEach((log) => {
+        const groupKey = isGroupedGameLogType(log.type) && log.groupId
+          ? `${log.type}:${log.groupId}`
+          : '';
+
+        if (groupKey) {
+          let group = groupsByKey.get(groupKey);
+
+          if (!group) {
+            group = { key: groupKey, legacyKey: getLegacyGameLogKey(log), type: log.type, logs: [] };
+            groupsByKey.set(groupKey, group);
+            groups.push(group);
+          }
+
+          if (!group.legacyKey) {
+            group.legacyKey = getLegacyGameLogKey(log);
+          }
+
+          group.logs.push(log);
+          return;
+        }
+
+        const legacyKey = getLegacyGameLogKey(log);
+        const previousGroup = groups[groups.length - 1];
+
+        if (
+          legacyKey &&
+          previousGroup?.legacyKey === legacyKey &&
+          areLogsNear(log, previousGroup.logs[previousGroup.logs.length - 1])
+        ) {
+          previousGroup.logs.push(log);
+          return;
+        }
+
+        groups.push({
+          key: log.id || `${log.type}-${log.createdAt}-${log.text}`,
+          legacyKey,
+          type: log.type,
+          logs: [log]
+        });
+      });
+
+      return groups;
+    }
+
+    function getLogsInDisplayOrder(group) {
+      return [...group.logs].sort((left, right) => {
+        const leftTime = Date.parse(left.createdAt || '');
+        const rightTime = Date.parse(right.createdAt || '');
+        return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+      });
+    }
+
+    function getGroupedCopyText(group) {
+      return getLogsInDisplayOrder(group)
+        .map((log) => log.publicText || log.text)
+        .join('\n\n');
+    }
+
     function parseLogSections(text) {
       const matches = [...String(text || '').matchAll(/^\[(공통 공개|플레이어 \d+ 공개|플레이어 \d+ 제출 정보|제출 정보)\]\s*$/gm)];
 
@@ -425,41 +519,49 @@
         return;
       }
 
-      latestPublicLogText = allLogs[0].publicText || allLogs[0].text;
+      const allGroups = groupLogsForRender(allLogs);
+      latestPublicLogText = allGroups.length ? getGroupedCopyText(allGroups[0]) : '';
       logBox.value = latestPublicLogText;
 
       const filteredLogs = getFilteredLogs();
-      logCount.textContent = `${filteredLogs.length} / ${allLogs.length} logs`;
+      const filteredGroups = groupLogsForRender(filteredLogs);
+      logCount.textContent = `${filteredGroups.length} / ${allLogs.length} logs`;
 
-      if (!filteredLogs.length) {
+      if (!filteredGroups.length) {
         logList.textContent = 'No logs for this filter.';
         return;
       }
 
-      filteredLogs.forEach((log) => {
+      filteredGroups.forEach((group) => {
         const item = document.createElement('div');
         const meta = document.createElement('div');
         const badge = document.createElement('span');
         const title = document.createElement('strong');
         const publicButton = document.createElement('button');
-        const publicText = log.publicText || log.text;
+        const latestLog = group.logs[0];
+        const publicText = getGroupedCopyText(group);
 
         item.className = 'log-item';
         meta.className = 'log-meta';
         badge.className = 'badge';
-        badge.textContent = log.type;
-        title.textContent = new Date(log.createdAt).toLocaleString();
+        badge.textContent = group.type;
+        title.textContent = `${new Date(latestLog.createdAt).toLocaleString()}${group.logs.length > 1 ? ` | ${group.logs.length} logs` : ''}`;
         publicButton.type = 'button';
-        publicButton.textContent = 'Copy public log';
+        publicButton.textContent = group.logs.length > 1 ? 'Copy public game' : 'Copy public log';
         publicButton.onclick = () => copyText(publicText);
 
         meta.append(badge, title, publicButton);
         item.appendChild(meta);
-        appendLogBody(item, log.text, log.type);
 
-        if (publicText !== log.text && parseLogSections(publicText)) {
-          appendLogBody(item, publicText, log.type);
-        }
+        getLogsInDisplayOrder(group).forEach((log) => {
+          const logPublicText = log.publicText || log.text;
+
+          appendLogBody(item, log.text, log.type);
+
+          if (logPublicText !== log.text && parseLogSections(logPublicText)) {
+            appendLogBody(item, logPublicText, log.type);
+          }
+        });
 
         logList.appendChild(item);
       });

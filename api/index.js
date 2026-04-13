@@ -155,17 +155,17 @@ const RATE_WRITE_RANGE = `${RATE_SHEET_REF}!A1`;
 const RATE_HEADER = ['color', 'value'];
 const LOG_SHEET_NAME = '로그';
 const LOG_SHEET_REF = `'${LOG_SHEET_NAME}'`;
-const LOG_HEADER_RANGE = `${LOG_SHEET_REF}!A1:E1`;
-const LOG_RANGE = `${LOG_SHEET_REF}!A:E`;
+const LOG_HEADER_RANGE = `${LOG_SHEET_REF}!A1:F1`;
+const LOG_RANGE = `${LOG_SHEET_REF}!A:F`;
 const LOG_ID_RANGE = `${LOG_SHEET_REF}!A:A`;
-const LOG_APPEND_RANGE = `${LOG_SHEET_REF}!A:E`;
-const LOG_HEADER = ['id', 'type', 'text', 'publicText', 'createdAt'];
+const LOG_APPEND_RANGE = `${LOG_SHEET_REF}!A:F`;
+const LOG_HEADER = ['id', 'type', 'text', 'publicText', 'createdAt', 'groupId'];
 const DEFAULT_LOG_LIMIT = 100;
 const MAX_LOG_LIMIT = 1000;
 const BLACKJACK_SESSION_SHEET_NAME = '블랙잭세션';
 const BLACKJACK_SESSION_SHEET_REF = `'${BLACKJACK_SESSION_SHEET_NAME}'`;
-const BLACKJACK_SESSION_HEADER_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A1:K1`;
-const BLACKJACK_SESSION_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A:K`;
+const BLACKJACK_SESSION_HEADER_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A1:L1`;
+const BLACKJACK_SESSION_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A:L`;
 const BLACKJACK_SESSION_ID_RANGE = `${BLACKJACK_SESSION_SHEET_REF}!A:A`;
 const BLACKJACK_SESSION_HEADER = [
   'playerId',
@@ -178,12 +178,13 @@ const BLACKJACK_SESSION_HEADER = [
   'dealerDraws',
   'done',
   'result',
-  'updatedAt'
+  'updatedAt',
+  'logGroupId'
 ];
 const BACCARAT_SESSION_SHEET_NAME = '바카라세션';
 const BACCARAT_SESSION_SHEET_REF = `'${BACCARAT_SESSION_SHEET_NAME}'`;
-const BACCARAT_SESSION_HEADER_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A1:M1`;
-const BACCARAT_SESSION_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A:M`;
+const BACCARAT_SESSION_HEADER_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A1:N1`;
+const BACCARAT_SESSION_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A:N`;
 const BACCARAT_SESSION_ID_RANGE = `${BACCARAT_SESSION_SHEET_REF}!A:A`;
 const BACCARAT_SESSION_HEADER = [
   'playerId',
@@ -198,7 +199,8 @@ const BACCARAT_SESSION_HEADER = [
   'playerAction',
   'done',
   'outcome',
-  'updatedAt'
+  'updatedAt',
+  'logGroupId'
 ];
 const RUSSIAN_ROULETTE_SESSION_SHEET_NAME = '러시안룰렛세션';
 const RUSSIAN_ROULETTE_SESSION_SHEET_REF = `'${RUSSIAN_ROULETTE_SESSION_SHEET_NAME}'`;
@@ -1210,7 +1212,8 @@ function parseBlackjackSessionRow(row) {
     lastDraw: row[6] || '',
     dealerDraws: parseJsonArray(row[7]),
     done: row[8] === 'true',
-    result: row[9] || ''
+    result: row[9] || '',
+    logGroupId: row[11] || ''
   };
 }
 
@@ -1226,7 +1229,8 @@ function blackjackSessionToRow(session) {
     JSON.stringify(session.dealerDraws || []),
     session.done ? 'true' : 'false',
     session.result || '',
-    new Date().toISOString()
+    new Date().toISOString(),
+    session.logGroupId || ''
   ];
 }
 
@@ -1243,7 +1247,7 @@ async function getBlackjackSession(playerId) {
     return null;
   }
 
-  const row = await readSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'K', rowNumber));
+  const row = await readSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'L', rowNumber));
   const session = parseBlackjackSessionRow(row);
 
   if (!Number.isFinite(session.playerId)) {
@@ -1261,7 +1265,7 @@ async function saveBlackjackSession(session) {
   const row = blackjackSessionToRow(session);
 
   if (rowNumber) {
-    await updateSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'K', rowNumber), row);
+    await updateSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'L', rowNumber), row);
   } else {
     const updatedRange = await appendSingleRow(BLACKJACK_SESSION_RANGE, row);
     rowNumber = getRowNumberFromRange(updatedRange);
@@ -1278,7 +1282,7 @@ async function deleteBlackjackSession(playerId) {
   const rowNumber = cachedSession?._rowNumber || await getBlackjackSessionRowNumber(playerId);
 
   if (rowNumber) {
-    await clearSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'K', rowNumber));
+    await clearSingleRow(sheetRowRange(BLACKJACK_SESSION_SHEET_REF, 'L', rowNumber));
   }
 
   blackjackSessions.delete(String(playerId));
@@ -1344,7 +1348,8 @@ function parseBaccaratSessionRow(row) {
     bankerThirdCard: row[8] || '',
     playerAction: row[9] || '',
     done: row[10] === 'true',
-    outcome: row[11] || ''
+    outcome: row[11] || '',
+    logGroupId: row[13] || ''
   };
 }
 
@@ -1362,7 +1367,8 @@ function baccaratSessionToRow(session) {
     session.playerAction || '',
     session.done ? 'true' : 'false',
     session.outcome || '',
-    new Date().toISOString()
+    new Date().toISOString(),
+    session.logGroupId || ''
   ];
 }
 
@@ -1379,7 +1385,7 @@ async function getBaccaratSession(playerId) {
     return null;
   }
 
-  const row = await readSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'M', rowNumber));
+  const row = await readSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'N', rowNumber));
   const session = parseBaccaratSessionRow(row);
 
   if (!Number.isFinite(session.playerId)) {
@@ -1397,7 +1403,7 @@ async function saveBaccaratSession(session) {
   const row = baccaratSessionToRow(session);
 
   if (rowNumber) {
-    await updateSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'M', rowNumber), row);
+    await updateSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'N', rowNumber), row);
   } else {
     const updatedRange = await appendSingleRow(BACCARAT_SESSION_RANGE, row);
     rowNumber = getRowNumberFromRange(updatedRange);
@@ -1414,7 +1420,7 @@ async function deleteBaccaratSession(playerId) {
   const rowNumber = cachedSession?._rowNumber || await getBaccaratSessionRowNumber(playerId);
 
   if (rowNumber) {
-    await clearSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'M', rowNumber));
+    await clearSingleRow(sheetRowRange(BACCARAT_SESSION_SHEET_REF, 'N', rowNumber));
   }
 
   baccaratSessions.delete(String(playerId));
@@ -1846,7 +1852,8 @@ function parseLogRow(row) {
     type: row[1] || '',
     text: row[2] || '',
     publicText: row[3] || row[2] || '',
-    createdAt: row[4] || new Date(Number(row[0]) || Date.now()).toISOString()
+    createdAt: row[4] || new Date(Number(row[0]) || Date.now()).toISOString(),
+    groupId: row[5] || ''
   };
 }
 
@@ -1876,7 +1883,7 @@ async function loadLimitedLogRows(limit) {
   const startRow = Math.max(2, endRow - limit + 1);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${LOG_SHEET_REF}!A${startRow}:E${endRow}`
+    range: `${LOG_SHEET_REF}!A${startRow}:F${endRow}`
   });
 
   return res.data.values || [];
@@ -1916,7 +1923,7 @@ async function appendLogToSheet(log) {
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
-      values: [[log.id, log.type, log.text, log.publicText, log.createdAt]]
+      values: [[log.id, log.type, log.text, log.publicText, log.createdAt, log.groupId || '']]
     }
   });
 }
@@ -2106,13 +2113,27 @@ function serializePlayers(playerList = players) {
     }));
 }
 
-async function addLog(type, text, publicText = text) {
+function createLogGroupId(type, key = '') {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return [type, key, suffix].filter(Boolean).join(':');
+}
+
+function ensureLogGroupId(session, type, key = '') {
+  if (!session.logGroupId) {
+    session.logGroupId = createLogGroupId(type, key || session.id || session.playerId);
+  }
+
+  return session.logGroupId;
+}
+
+async function addLog(type, text, publicText = text, options = {}) {
   const log = {
     id: Date.now(),
     type,
     text,
     publicText,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    groupId: options.groupId || ''
   };
 
   await appendLogToSheet(log);
@@ -4508,13 +4529,7 @@ function createCombinationParticipantState(playerId) {
   };
 }
 
-function normalizeCombinationTarget(value) {
-  const target = Number(value);
-
-  if (Number.isFinite(target)) {
-    return target;
-  }
-
+function drawCombinationTarget() {
   return COMBINATION_TARGET_MIN + Math.floor(Math.random() * (COMBINATION_TARGET_MAX - COMBINATION_TARGET_MIN + 1));
 }
 
@@ -5047,7 +5062,7 @@ app.post('/rates', async (req, res) => {
 
 app.post('/formula-high-low/start', async (req, res) => {
   try {
-    const { color, amount, roundNumber, targetNumber, target } = req.body;
+    const { color, amount, roundNumber } = req.body;
     const bet = toChipAmount(amount);
     const parsedRoundNumber = toChipAmount(roundNumber);
     const participantIds = normalizeCombinationParticipantIds(req.body);
@@ -5085,7 +5100,7 @@ app.post('/formula-high-low/start', async (req, res) => {
       participantIds,
       color,
       bet,
-      target: normalizeCombinationTarget(targetNumber ?? target),
+      target: drawCombinationTarget(),
       operatorCards: [...COMBINATION_OPERATOR_CARDS],
       participantStates: participantIds.map(createCombinationParticipantState),
       pot: bet * participantIds.length,
@@ -5481,6 +5496,7 @@ app.post('/blackjack/start', async (req, res) => {
       deck,
       playerCards,
       dealerCards,
+      logGroupId: createLogGroupId('blackjack', player.id),
       lastDraw: `시작 카드: 플레이어 ${playerCards.join(', ')} / 딜러 ${dealerCards.join(', ')}`
     };
 
@@ -5488,7 +5504,8 @@ app.post('/blackjack/start', async (req, res) => {
       addLog(
         'blackjack',
         makeBlackjackProgressLog(player, session, 'start', '진행 중'),
-        makeBlackjackPublicLog(player, session, 'start', '진행 중')
+        makeBlackjackPublicLog(player, session, 'start', '진행 중'),
+        { groupId: session.logGroupId }
       ),
       saveBlackjackSession(session),
       savePlayers([player])
@@ -5533,11 +5550,12 @@ app.post('/blackjack/action', async (req, res) => {
       if (getBlackjackHandValue(session.playerCards) > 21) {
         resultText = finishBlackjackSession(player, session);
         [log] = await Promise.all([
-          addLog(
-            'blackjack',
-            makeBlackjackProgressLog(player, session, 'hit', resultText),
-            makeBlackjackPublicLog(player, session, 'hit', resultText)
-          ),
+        addLog(
+          'blackjack',
+          makeBlackjackProgressLog(player, session, 'hit', resultText),
+          makeBlackjackPublicLog(player, session, 'hit', resultText),
+          { groupId: ensureLogGroupId(session, 'blackjack', player.id) }
+        ),
           savePlayers([player]),
           deleteBlackjackSession(playerId)
         ]);
@@ -5547,7 +5565,8 @@ app.post('/blackjack/action', async (req, res) => {
           addLog(
             'blackjack',
             makeBlackjackProgressLog(player, session, 'hit', resultText),
-            makeBlackjackPublicLog(player, session, 'hit', resultText)
+            makeBlackjackPublicLog(player, session, 'hit', resultText),
+            { groupId: ensureLogGroupId(session, 'blackjack', player.id) }
           ),
           saveBlackjackSession(session)
         ]);
@@ -5566,7 +5585,8 @@ app.post('/blackjack/action', async (req, res) => {
         addLog(
           'blackjack',
           makeBlackjackProgressLog(player, session, 'stand', resultText),
-          makeBlackjackPublicLog(player, session, 'stand', resultText)
+          makeBlackjackPublicLog(player, session, 'stand', resultText),
+          { groupId: ensureLogGroupId(session, 'blackjack', player.id) }
         ),
         savePlayers([player]),
         deleteBlackjackSession(playerId)
@@ -5632,7 +5652,8 @@ app.post('/baccarat/start', async (req, res) => {
       bankerThirdCard: '',
       playerAction: '',
       done: false,
-      outcome: ''
+      outcome: '',
+      logGroupId: createLogGroupId('baccarat', player.id)
     };
 
     let resultText = '플레이어 선택 대기';
@@ -5645,7 +5666,8 @@ app.post('/baccarat/start', async (req, res) => {
         addLog(
           'baccarat',
           makeBaccaratProgressLog(player, session, 'start', resultText),
-          makeBaccaratPublicLog(player, session, 'start', resultText)
+          makeBaccaratPublicLog(player, session, 'start', resultText),
+          { groupId: session.logGroupId }
         ),
         savePlayers([player]),
         deleteBaccaratSession(player.id)
@@ -5655,7 +5677,8 @@ app.post('/baccarat/start', async (req, res) => {
         addLog(
           'baccarat',
           makeBaccaratProgressLog(player, session, 'start', resultText),
-          makeBaccaratPublicLog(player, session, 'start', resultText)
+          makeBaccaratPublicLog(player, session, 'start', resultText),
+          { groupId: session.logGroupId }
         ),
         saveBaccaratSession(session),
         savePlayers([player])
@@ -5709,7 +5732,8 @@ app.post('/baccarat/action', async (req, res) => {
       addLog(
         'baccarat',
         makeBaccaratProgressLog(player, session, nextAction, resultText),
-        makeBaccaratPublicLog(player, session, nextAction, resultText)
+        makeBaccaratPublicLog(player, session, nextAction, resultText),
+        { groupId: ensureLogGroupId(session, 'baccarat', player.id) }
       ),
       savePlayers([player]),
       deleteBaccaratSession(playerId)
@@ -5784,7 +5808,8 @@ app.post('/russian-roulette/start', async (req, res) => {
       addLog(
         'russianroulette',
         makeRussianRouletteLog(session),
-        makeRussianRoulettePublicLog(session)
+        makeRussianRoulettePublicLog(session),
+        { groupId: session.id }
       ),
       saveRussianRouletteSession(session),
       savePlayers(participants)
@@ -5840,7 +5865,8 @@ app.post('/russian-roulette/trigger', async (req, res) => {
         addLog(
           'russianroulette',
           makeRussianRouletteLog(session),
-          makeRussianRoulettePublicLog(session)
+          makeRussianRoulettePublicLog(session),
+          { groupId: session.id }
         ),
         savePlayers([winner]),
         deleteRussianRouletteSession(session.id)
@@ -5859,7 +5885,8 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       addLog(
         'russianroulette',
         makeRussianRouletteLog(session),
-        makeRussianRoulettePublicLog(session)
+        makeRussianRoulettePublicLog(session),
+        { groupId: session.id }
       ),
       saveRussianRouletteSession(session)
     ]);
