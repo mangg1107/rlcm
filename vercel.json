@@ -17,5 +17,11 @@
       "source": "/exchange",
       "destination": "/exchange.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/reset-game-limits",
+      "schedule": "0 15 * * *"
+    }
   ]
 }

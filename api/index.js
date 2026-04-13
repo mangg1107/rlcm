@@ -33,6 +33,7 @@ let baccaratSessionSheetReady = false;
 let russianRouletteSessionSheetReady = false;
 let pvpSessionSheetReady = false;
 let formulaHighLowSessionSheetReady = false;
+let settingsSheetReady = false;
 let blackjackSessions = new Map();
 let baccaratSessions = new Map();
 let russianRouletteSessions = new Map();
@@ -54,6 +55,9 @@ const GAME_LIMITS = [
   { type: 'redblack', key: 'redblackLimit', label: 'Red Black' }
 ];
 const GAME_LIMIT_BY_TYPE = new Map(GAME_LIMITS.map((config) => [config.type, config]));
+const DEFAULT_DAILY_GAME_LIMIT = 3;
+const GAME_LIMIT_RESET_TIME_ZONE = 'Asia/Seoul';
+const GAME_LIMIT_RESET_KEY = 'lastGameLimitResetDate';
 const DEFAULT_RATES = { red: 1, blue: 3, green: 5, yellow: 10, white: 15 };
 
 let rates = { ...DEFAULT_RATES };
@@ -122,7 +126,14 @@ const PLAYER_MIGRATION_RANGE = `${PLAYER_SHEET_REF}!A:N`;
 const PLAYER_WRITE_RANGE = `${PLAYER_SHEET_REF}!A1`;
 const PLAYER_ID_RANGE = `${PLAYER_SHEET_REF}!A:A`;
 const PLAYER_HEADER_RANGE = `${PLAYER_SHEET_REF}!A1:${PLAYER_END_COLUMN}1`;
+const PLAYER_GAME_LIMIT_RESET_RANGE_START_COLUMN = 'I';
+const PLAYER_GAME_LIMIT_RESET_RANGE_END_COLUMN = 'M';
 const PLAYER_HEADER = ['id', 'name', 'team', ...COLORS, ...GAME_LIMITS.map((game) => game.key)];
+const SETTINGS_SHEET_NAME = '설정';
+const SETTINGS_SHEET_REF = `'${SETTINGS_SHEET_NAME}'`;
+const SETTINGS_HEADER_RANGE = `${SETTINGS_SHEET_REF}!A1:B1`;
+const SETTINGS_RANGE = `${SETTINGS_SHEET_REF}!A:B`;
+const SETTINGS_HEADER = ['key', 'value'];
 const RATE_SHEET_NAME = '칩가치';
 const RATE_SHEET_REF = `'${RATE_SHEET_NAME}'`;
 const RATE_HEADER_RANGE = `${RATE_SHEET_REF}!A1:B1`;
@@ -390,8 +401,156 @@ async function ensurePlayerSheetHeader() {
   }
 }
 
+async function ensureSettingsSheetHeader() {
+  if (settingsSheetReady) {
+    return;
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties.title'
+  });
+  const sheetExists = (spreadsheet.data.sheets || [])
+    .some((sheet) => sheet.properties?.title === SETTINGS_SHEET_NAME);
+
+  if (!sheetExists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: { title: SETTINGS_SHEET_NAME }
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: SETTINGS_HEADER_RANGE
+  });
+  const header = (res.data.values || [])[0] || [];
+
+  if (!headerMatches(header, SETTINGS_HEADER)) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: SETTINGS_HEADER_RANGE,
+      valueInputOption: 'RAW',
+      requestBody: { values: [SETTINGS_HEADER] }
+    });
+  }
+
+  settingsSheetReady = true;
+}
+
+async function readSettingValue(key) {
+  await ensureSettingsSheetHeader();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: SETTINGS_RANGE
+  });
+  const rows = res.data.values || [];
+  const match = rows.find((row, index) => index > 0 && normalizeHeaderCell(row[0]) === key);
+
+  return match?.[1] || '';
+}
+
+async function saveSettingValue(key, value) {
+  await ensureSettingsSheetHeader();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: SETTINGS_RANGE
+  });
+  const rows = res.data.values || [];
+  const rowIndex = rows.findIndex((row, index) => index > 0 && normalizeHeaderCell(row[0]) === key);
+
+  if (rowIndex >= 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SETTINGS_SHEET_REF}!A${rowIndex + 1}:B${rowIndex + 1}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[key, value]] }
+    });
+    return;
+  }
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: SETTINGS_RANGE,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[key, value]] }
+  });
+}
+
+async function getLastPlayerDataRowNumber() {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: PLAYER_ID_RANGE
+  });
+  let lastRowNumber = 1;
+
+  (res.data.values || []).forEach((row, index) => {
+    if (index > 0 && normalizeHeaderCell(row[0])) {
+      lastRowNumber = index + 1;
+    }
+  });
+
+  return lastRowNumber;
+}
+
+async function resetDailyGameLimitRange() {
+  const lastRowNumber = await getLastPlayerDataRowNumber();
+
+  if (lastRowNumber < 2) {
+    return false;
+  }
+
+  const rowCount = lastRowNumber - 1;
+  const values = Array.from(
+    { length: rowCount },
+    () => GAME_LIMITS.map(() => DEFAULT_DAILY_GAME_LIMIT)
+  );
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${PLAYER_SHEET_REF}!${PLAYER_GAME_LIMIT_RESET_RANGE_START_COLUMN}2:${PLAYER_GAME_LIMIT_RESET_RANGE_END_COLUMN}${lastRowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values }
+  });
+
+  players.forEach((player) => {
+    GAME_LIMITS.forEach((game) => {
+      player[game.key] = DEFAULT_DAILY_GAME_LIMIT;
+    });
+  });
+
+  return true;
+}
+
+async function ensureDailyGameLimitReset() {
+  await ensurePlayerSheetHeader();
+
+  const today = getKoreaDateKey();
+  const lastResetDate = await readSettingValue(GAME_LIMIT_RESET_KEY);
+
+  if (lastResetDate === today) {
+    return false;
+  }
+
+  await resetDailyGameLimitRange();
+  await saveSettingValue(GAME_LIMIT_RESET_KEY, today);
+  return true;
+}
+
 async function loadSheet() {
   await ensurePlayerSheetHeader();
+  await ensureDailyGameLimitReset();
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
@@ -461,6 +620,8 @@ async function loadPlayersByIds(playerIds) {
     players = [];
     return players;
   }
+
+  await ensureDailyGameLimitReset();
 
   const rowNumbers = await getPlayerRowNumbers(ids);
   const targets = ids
@@ -1638,6 +1799,18 @@ function readGameLimitValue(value) {
 
 function formatGameLimitValue(value) {
   return Number.isFinite(Number(value)) ? Math.max(0, toChipAmount(value)) : '';
+}
+
+function getKoreaDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: GAME_LIMIT_RESET_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `${byType.year}-${byType.month}-${byType.day}`;
 }
 
 function getPlayerById(playerId) {
@@ -4140,6 +4313,42 @@ app.get('/logs', async (req, res) => {
 
 app.get('/debug/env', (req, res) => {
   res.json(getEnvDebugInfo());
+});
+
+app.get('/reset-game-limits', async (req, res) => {
+  try {
+    const reset = await ensureDailyGameLimitReset();
+    const today = getKoreaDateKey();
+
+    res.json({
+      ok: true,
+      reset,
+      date: today,
+      range: `${PLAYER_SHEET_NAME}!${PLAYER_GAME_LIMIT_RESET_RANGE_START_COLUMN}2:${PLAYER_GAME_LIMIT_RESET_RANGE_END_COLUMN}x`,
+      value: DEFAULT_DAILY_GAME_LIMIT
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || '게임 횟수 리셋 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/reset-game-limits', async (req, res) => {
+  try {
+    const reset = await ensureDailyGameLimitReset();
+    const today = getKoreaDateKey();
+
+    res.json({
+      ok: true,
+      reset,
+      date: today,
+      range: `${PLAYER_SHEET_NAME}!${PLAYER_GAME_LIMIT_RESET_RANGE_START_COLUMN}2:${PLAYER_GAME_LIMIT_RESET_RANGE_END_COLUMN}x`,
+      value: DEFAULT_DAILY_GAME_LIMIT
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message || '게임 횟수 리셋 중 오류가 발생했습니다.' });
+  }
 });
 
 app.post('/logs/test', async (req, res) => {
