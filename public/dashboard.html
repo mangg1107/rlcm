@@ -264,8 +264,8 @@
       return allLogs;
     }
 
-    function parsePvpPublicSections(text) {
-      const matches = [...String(text || '').matchAll(/^\[(공통 공개|플레이어 1 공개|플레이어 2 공개)\]\s*$/gm)];
+    function parseLogSections(text) {
+      const matches = [...String(text || '').matchAll(/^\[(공통 공개|플레이어 \d+ 공개|플레이어 \d+ 제출 정보|제출 정보)\]\s*$/gm)];
 
       if (!matches.length) {
         return null;
@@ -306,10 +306,64 @@
       return parts.join('\n\n');
     }
 
-    function appendLogBody(container, text) {
-      const parsed = parsePvpPublicSections(text);
+    function getSectionCopyButtonLabel(section) {
+      if (section.label === '공통 공개') {
+        return '공통 공개 복사';
+      }
+
+      if (section.label.startsWith('플레이어')) {
+        return `${section.label.replace(' 공개', '').replace(' 제출 정보', '')}용 복사`;
+      }
+
+      return `${section.label} 복사`;
+    }
+
+    function getSingleGameLogLabel(type) {
+      if (type === 'baccarat') {
+        return '바카라 게임';
+      }
+
+      if (type === 'blackjack') {
+        return '블랙잭 게임';
+      }
+
+      if (type === 'russianroulette') {
+        return '라운드 진행';
+      }
+
+      return '';
+    }
+
+    function appendSingleLogSection(container, labelText, text) {
+      const wrapper = document.createElement('div');
+      const block = document.createElement('div');
+      const header = document.createElement('div');
+      const label = document.createElement('strong');
+      const pre = document.createElement('pre');
+
+      wrapper.className = 'log-public-sections';
+      block.className = 'log-public-section';
+      header.className = 'log-public-section-head';
+      label.textContent = labelText;
+      pre.textContent = text;
+
+      header.appendChild(label);
+      block.append(header, pre);
+      wrapper.appendChild(block);
+      container.appendChild(wrapper);
+    }
+
+    function appendLogBody(container, text, type = '') {
+      const parsed = parseLogSections(text);
 
       if (!parsed) {
+        const singleLogLabel = getSingleGameLogLabel(type);
+
+        if (singleLogLabel) {
+          appendSingleLogSection(container, singleLogLabel, text);
+          return;
+        }
+
         const pre = document.createElement('pre');
         pre.textContent = text;
         container.appendChild(pre);
@@ -338,12 +392,10 @@
         pre.textContent = section.text;
         header.appendChild(label);
 
-        if (section.label === '공통 공개' || section.label.startsWith('플레이어')) {
+        if (section.label === '공통 공개' || section.label.startsWith('플레이어') || section.label === '제출 정보') {
           const copyButton = document.createElement('button');
           copyButton.type = 'button';
-          copyButton.textContent = section.label === '공통 공개'
-            ? '공통 공개 복사'
-            : `${section.label.replace(' 공개', '')}용 복사`;
+          copyButton.textContent = getSectionCopyButtonLabel(section);
           copyButton.onclick = () => copyText(getSectionCopyText(parsed, section));
           header.appendChild(copyButton);
         }
@@ -397,10 +449,10 @@
 
         meta.append(badge, title, publicButton);
         item.appendChild(meta);
-        appendLogBody(item, log.text);
+        appendLogBody(item, log.text, log.type);
 
-        if (publicText !== log.text && parsePvpPublicSections(publicText)) {
-          appendLogBody(item, publicText);
+        if (publicText !== log.text && parseLogSections(publicText)) {
+          appendLogBody(item, publicText, log.type);
         }
 
         logList.appendChild(item);

@@ -26,6 +26,8 @@ function createApiApp(options = {}) {
 let players = [];
 let lastLogText = '';
 let logHistory = [];
+let playerSheetReady = false;
+let playerSheetReadyPromise = null;
 let logSheetReady = false;
 let rateSheetReady = false;
 let blackjackSessionSheetReady = false;
@@ -59,8 +61,14 @@ const DEFAULT_DAILY_GAME_LIMIT = 3;
 const GAME_LIMIT_RESET_TIME_ZONE = 'Asia/Seoul';
 const GAME_LIMIT_RESET_KEY = 'lastGameLimitResetDate';
 const DEFAULT_RATES = { red: 1, blue: 3, green: 5, yellow: 10, white: 15 };
+const READ_CACHE_TTL_MS = 3000;
 
 let rates = { ...DEFAULT_RATES };
+let playersLoadedAt = 0;
+let playersCacheInvalidatedAt = 0;
+let playersLoadPromise = null;
+let ratesLoadedAt = 0;
+let ratesLoadPromise = null;
 
 // =========================
 // 🔑 Google Sheets 설정
@@ -342,62 +350,97 @@ function uniquePlayerIds(playerIds) {
     .filter((id) => Number.isFinite(id));
 }
 
-async function ensurePlayerSheetHeader() {
-  const spreadsheet = await sheets.spreadsheets.get({
-    spreadsheetId: SPREADSHEET_ID,
-    fields: 'sheets.properties.title'
-  });
-  const sheetExists = (spreadsheet.data.sheets || [])
-    .some((sheet) => sheet.properties?.title === PLAYER_SHEET_NAME);
+function isReadCacheFresh(loadedAt) {
+  return loadedAt > 0 && Date.now() - loadedAt < READ_CACHE_TTL_MS;
+}
 
-  if (!sheetExists) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
-      requestBody: {
-        requests: [
-          {
-            addSheet: {
-              properties: { title: PLAYER_SHEET_NAME }
-            }
-          }
-        ]
-      }
-    });
+function invalidatePlayersCache() {
+  playersLoadedAt = 0;
+  playersCacheInvalidatedAt = Date.now();
+}
+
+function markPlayersCacheFresh() {
+  playersLoadedAt = Date.now();
+}
+
+function markRatesCacheFresh() {
+  ratesLoadedAt = Date.now();
+}
+
+async function ensurePlayerSheetHeader() {
+  if (playerSheetReady) {
+    return;
   }
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: PLAYER_MIGRATION_RANGE
-  });
-  const values = res.data.values || [];
-  const header = values[0] || [];
-  const hasHeader = headerMatches(header, PLAYER_HEADER);
+  if (playerSheetReadyPromise) {
+    return playerSheetReadyPromise;
+  }
 
-  if (!hasHeader) {
-    const migratedRows = [
-      PLAYER_HEADER,
-      ...values
-        .slice(1)
-        .filter((row) => row.some((cell) => normalizeHeaderCell(cell)))
-        .map((row, index) => playerToRow(parsePlayerRowByHeader(row, header, index + 2)))
-    ];
+  playerSheetReadyPromise = (async () => {
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: SPREADSHEET_ID,
+      fields: 'sheets.properties.title'
+    });
+    const sheetExists = (spreadsheet.data.sheets || [])
+      .some((sheet) => sheet.properties?.title === PLAYER_SHEET_NAME);
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: PLAYER_WRITE_RANGE,
-      valueInputOption: 'RAW',
-      requestBody: { values: migratedRows }
-    });
+    if (!sheetExists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: { title: PLAYER_SHEET_NAME }
+              }
+            }
+          ]
+        }
+      });
+    }
 
-    await sheets.spreadsheets.values.clear({
+    const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${PLAYER_SHEET_REF}!N:N`
+      range: PLAYER_MIGRATION_RANGE
     });
-  } else if (normalizeHeaderCell(header[13]) === 'russianrouletteLimit') {
-    await sheets.spreadsheets.values.clear({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${PLAYER_SHEET_REF}!N:N`
-    });
+    const values = res.data.values || [];
+    const header = values[0] || [];
+    const hasHeader = headerMatches(header, PLAYER_HEADER);
+
+    if (!hasHeader) {
+      const migratedRows = [
+        PLAYER_HEADER,
+        ...values
+          .slice(1)
+          .filter((row) => row.some((cell) => normalizeHeaderCell(cell)))
+          .map((row, index) => playerToRow(parsePlayerRowByHeader(row, header, index + 2)))
+      ];
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: PLAYER_WRITE_RANGE,
+        valueInputOption: 'RAW',
+        requestBody: { values: migratedRows }
+      });
+
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${PLAYER_SHEET_REF}!N:N`
+      });
+    } else if (normalizeHeaderCell(header[13]) === 'russianrouletteLimit') {
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${PLAYER_SHEET_REF}!N:N`
+      });
+    }
+
+    playerSheetReady = true;
+  })();
+
+  try {
+    await playerSheetReadyPromise;
+  } finally {
+    playerSheetReadyPromise = null;
   }
 }
 
@@ -530,6 +573,7 @@ async function resetDailyGameLimitRange() {
     });
   });
 
+  invalidatePlayersCache();
   return true;
 }
 
@@ -567,6 +611,32 @@ async function loadSheet() {
   players = rows.slice(1).map((row, index) => parsePlayerRow(row, index + 2));
 }
 
+async function loadSheetCached() {
+  if (isReadCacheFresh(playersLoadedAt)) {
+    return players;
+  }
+
+  if (playersLoadPromise) {
+    return playersLoadPromise;
+  }
+
+  const loadStartedAt = Date.now();
+
+  playersLoadPromise = loadSheet()
+    .then(() => {
+      if (playersCacheInvalidatedAt <= loadStartedAt) {
+        markPlayersCacheFresh();
+      }
+
+      return players;
+    })
+    .finally(() => {
+      playersLoadPromise = null;
+    });
+
+  return playersLoadPromise;
+}
+
 // =========================
 // 📤 서버 → 시트
 // =========================
@@ -584,6 +654,8 @@ async function saveSheet() {
     valueInputOption: 'RAW',
     requestBody: { values }
   });
+
+  invalidatePlayersCache();
 }
 
 async function getPlayerRowNumbers(playerIds) {
@@ -614,6 +686,8 @@ async function getPlayerRowNumbers(playerIds) {
 }
 
 async function loadPlayersByIds(playerIds) {
+  invalidatePlayersCache();
+
   const ids = uniquePlayerIds(playerIds);
 
   if (!ids.length) {
@@ -689,6 +763,8 @@ async function savePlayers(changedPlayers) {
       data
     }
   });
+
+  invalidatePlayersCache();
 }
 
 async function ensureLogSheetHeader() {
@@ -811,7 +887,25 @@ async function loadRates() {
   });
 
   rates = nextRates;
+  markRatesCacheFresh();
   return rates;
+}
+
+async function loadRatesCached() {
+  if (isReadCacheFresh(ratesLoadedAt)) {
+    return rates;
+  }
+
+  if (ratesLoadPromise) {
+    return ratesLoadPromise;
+  }
+
+  ratesLoadPromise = loadRates()
+    .finally(() => {
+      ratesLoadPromise = null;
+    });
+
+  return ratesLoadPromise;
 }
 
 async function saveRates(nextRates) {
@@ -833,6 +927,7 @@ async function saveRates(nextRates) {
     }
   });
 
+  markRatesCacheFresh();
   return rates;
 }
 
@@ -4262,9 +4357,6 @@ ${makeFormulaHighLowCardsText(settlement.playerOne.name, settlement.session.play
 
 ${makeFormulaHighLowCardsText(settlement.playerTwo.name, settlement.session.playerTwoState, settlement.evaluation.playerTwo, settlement.evaluation.choices.playerTwo)}
 
-결과 메모
-${settlement.memo || '-'}
-
 현재
 ${settlement.playerOne.name}: ${chipStr(settlement.playerOne)}
 ${settlement.playerTwo.name}: ${chipStr(settlement.playerTwo)}`;
@@ -4285,10 +4377,7 @@ function makeFormulaHighLowPublicLog(settlement) {
 
 ${makeFormulaHighLowCardsText(settlement.playerOne.name, settlement.session.playerOneState, settlement.evaluation.playerOne, settlement.evaluation.choices.playerOne)}
 
-${makeFormulaHighLowCardsText(settlement.playerTwo.name, settlement.session.playerTwoState, settlement.evaluation.playerTwo, settlement.evaluation.choices.playerTwo)}
-
-결과 메모
-${settlement.memo || '-'}`;
+${makeFormulaHighLowCardsText(settlement.playerTwo.name, settlement.session.playerTwoState, settlement.evaluation.playerTwo, settlement.evaluation.choices.playerTwo)}`;
 }
 
 const COMBINATION_OPERATOR_CARDS = ['+', '-', '*', '/', '^'];
@@ -4542,8 +4631,20 @@ function formatCombinationNumbers(numbers) {
   return Array.isArray(numbers) && numbers.length ? numbers.join(', ') : '-';
 }
 
-function formatCombinationOperators() {
-  return COMBINATION_OPERATOR_CARDS.map((operator) => COMBINATION_OPERATOR_LABELS[operator]).join(', ');
+function formatCombinationOperatorsWithInputAliases() {
+  return COMBINATION_OPERATOR_CARDS
+    .map((operator) => {
+      if (operator === '*') {
+        return '×(*)';
+      }
+
+      if (operator === '/') {
+        return '÷(/)';
+      }
+
+      return COMBINATION_OPERATOR_LABELS[operator];
+    })
+    .join(', ');
 }
 
 function getCombinationPlayerName(playerId) {
@@ -4615,7 +4716,7 @@ function makeCombinationBettingStartLog(participants, session) {
 참가자: ${participants.map((player) => player.name).join(', ')}
 각자 베팅: ${session.color} ${session.bet}개
 총 팟: ${session.color} ${session.pot}개
-사용 가능 기호: ${formatCombinationOperators()}
+사용 가능 기호: ${formatCombinationOperatorsWithInputAliases()}
 규칙: 보유 숫자 6개 중 3개와 기호 2개를 골라 숫자, 기호, 숫자, 기호, 숫자 형식의 수식을 제출합니다.
 
 숫자 카드
@@ -4623,13 +4724,25 @@ ${hands}`;
 }
 
 function makeCombinationBettingStartPublicLog(participants, session) {
+  const playerSections = (session.participantStates || [])
+    .map((state, index) => {
+      return `[플레이어 ${index + 1} 제출 정보]
+숫자: ${formatCombinationNumbers(state.numbers)}
+타겟: ${formatFormulaValue(session.target)}
+연산자: ${formatCombinationOperatorsWithInputAliases()}
+제출 형식: 숫자, 연산자, 숫자, 연산자, 숫자`;
+    })
+    .join('\n\n');
+
   return `콤비네이션 베팅 시작
+[공통 공개]
 목표 숫자: ${formatFormulaValue(session.target)}
 참가자: ${participants.map((player) => player.name).join(', ')}
 각자 베팅: ${session.color} ${session.bet}개
 총 팟: ${session.color} ${session.pot}개
-사용 가능 기호: ${formatCombinationOperators()}
-제출 형식: 숫자, 기호, 숫자, 기호, 숫자`;
+사용 가능 기호: ${formatCombinationOperatorsWithInputAliases()}
+
+${playerSections}`;
 }
 
 function makeCombinationBettingSettlementLog(participants, session, payouts) {
@@ -4665,9 +4778,6 @@ function makeCombinationBettingSettlementLog(participants, session, payouts) {
 
 ${results}
 
-결과 메모
-${session.memo || '-'}
-
 현재
 ${balances}`;
 }
@@ -4690,7 +4800,7 @@ app.get('/', (req, res) => {
 // 플레이어 조회
 app.get('/players', async (req, res) => {
   try {
-    await Promise.all([loadSheet(), loadRates()]);
+    await Promise.all([loadSheetCached(), loadRatesCached()]);
     res.json(serializePlayers(players));
   } catch (err) {
     console.error(err);
@@ -4700,7 +4810,7 @@ app.get('/players', async (req, res) => {
 
 app.get('/teams', async (req, res) => {
   try {
-    await Promise.all([loadSheet(), loadRates()]);
+    await Promise.all([loadSheetCached(), loadRatesCached()]);
     res.json({
       rates,
       teams: buildTeamTotals(players),
@@ -4817,7 +4927,7 @@ app.post('/players/:playerId/balance-log', async (req, res) => {
 // 환율 조회
 app.get('/rates', async (req, res) => {
   try {
-    const nextRates = await loadRates();
+    const nextRates = await loadRatesCached();
     res.json(nextRates);
   } catch (err) {
     console.error(err);
@@ -4949,8 +5059,7 @@ async function handleFormulaHighLowResolve(req, res) {
   try {
     const {
       sessionId,
-      submissions = [],
-      memo = ''
+      submissions = []
     } = req.body;
     const session = await getFormulaHighLowSession(sessionId);
 
@@ -5020,7 +5129,7 @@ async function handleFormulaHighLowResolve(req, res) {
 
     session.stage = 'done';
     session.winnerIds = winnerIds;
-    session.memo = String(memo || '').trim();
+    session.memo = '';
     session.result = winnerIds.length === 1
       ? `${getCombinationPlayerName(winnerIds[0])} 승리`
       : `동점 / 팟 분배: ${getCombinationWinnerNames(winnerIds)}`;
