@@ -2597,10 +2597,6 @@ function getPvpPlayerName(playerId) {
   return getPlayerById(playerId)?.name || `#${playerId}`;
 }
 
-function getRandomPvpTurn() {
-  return Math.random() < 0.5 ? 'playerOne' : 'playerTwo';
-}
-
 function getPvpSessionState(session) {
   const playerOneName = getPvpPlayerName(session.playerOneId);
   const playerTwoName = getPvpPlayerName(session.playerTwoId);
@@ -2816,7 +2812,6 @@ function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
 플레이어 1: ${playerOne.name}
 플레이어 2: ${playerTwo.name}
 베팅: ${session.color} ${session.bet}
-턴: ${state.done ? '-' : state.activePlayerName}
 결과: ${resultText}
 승자: ${state.winnerName || '-'}
 
@@ -4753,7 +4748,7 @@ app.post('/pvp-baccarat/start', async (req, res) => {
       playerTwoCards: [drawBaccaratCard(shoe), drawBaccaratCard(shoe)],
       playerOneAction: '',
       playerTwoAction: '',
-      turn: getRandomPvpTurn(),
+      turn: 'playerOne',
       done: false,
       winnerKey: '',
       result: ''
@@ -4822,7 +4817,7 @@ app.post('/pvp-blackjack/start', async (req, res) => {
       playerTwoCards: [drawBlackjackCard(deck), drawBlackjackCard(deck)],
       playerOneAction: '',
       playerTwoAction: '',
-      turn: getRandomPvpTurn(),
+      turn: 'playerOne',
       done: false,
       winnerKey: '',
       result: ''

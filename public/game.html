@@ -1519,7 +1519,10 @@ Status: ${state.done ? state.result : 'in progress'}`;
       const common = parsed.sections.find((candidate) => candidate.label === '공통 공개');
 
       if (!section.label.startsWith('플레이어') || !common) {
-        return `[${section.label}]\n${section.text}`;
+        return [
+          parsed.title,
+          `[${section.label}]\n${section.text}`
+        ].filter(Boolean).join('\n\n');
       }
 
       const parts = [];
@@ -1565,10 +1568,12 @@ Status: ${state.done ? state.result : 'in progress'}`;
         pre.textContent = section.text;
         header.appendChild(label);
 
-        if (section.label.startsWith('플레이어')) {
+        if (section.label === '공통 공개' || section.label.startsWith('플레이어')) {
           const copyButton = document.createElement('button');
           copyButton.type = 'button';
-          copyButton.textContent = `${section.label.replace(' 공개', '')}용 복사`;
+          copyButton.textContent = section.label === '공통 공개'
+            ? '공통 공개 복사'
+            : `${section.label.replace(' 공개', '')}용 복사`;
           copyButton.onclick = () => copyText(getSectionCopyText(parsed, section));
           header.appendChild(copyButton);
         }
