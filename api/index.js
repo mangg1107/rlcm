@@ -2803,9 +2803,7 @@ function makePvpPlayerPublicSection(viewer, state, session, viewerKey) {
   const revealOpponent = Boolean(state.done);
 
   return `${viewer.name}
-내 행동: ${state[`${viewerKey}Action`] || '-'}
 내 패: ${formatPvpCardsForViewer(viewerCards, valueLabel, viewerValue, true)}
-상대 행동: ${state[`${opponentKey}Action`] || '-'}
 상대 패: ${formatPvpOpponentCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent, session.gameType)}`;
 }
 
