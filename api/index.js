@@ -3322,17 +3322,34 @@ function makeConvertPublicLog(p, fromColor, toColor, amount, result) {
 기준 비율: ${COLORS.map((color) => `${CHIP_LABELS[color]}=${rates[color]}`).join(', ')}`;
 }
 
+function makeChipAdjustLog(p, color, amount, action) {
+  const label = action === 'add' ? '추가' : '감소';
+
+  return `관리자 칩 ${label}
+플레이어: ${p.name}
+변경 칩: ${color} ${amount}
+현재: ${chipStr(p)}`;
+}
+
+function makeChipAdjustPublicLog(p, color, amount, action) {
+  const label = action === 'add' ? '추가' : '감소';
+
+  return `플레이어: ${p.name}
+변경: ${color} ${amount} ${label}`;
+}
+
 function makeBalanceLog(p) {
   return `현재 잔고
 ID: ${p.id}
 플레이어: ${p.name}
-잔고: ${chipStr(p)}`;
+잔고: ${chipStr(p)}
+총 가치: ${getPlayerChipValue(p)}`;
 }
 
 function makeBalancePublicLog(p) {
-  return `ID: ${p.id}
-플레이어: ${p.name}
-잔고: ${chipStr(p)}`;
+  return `플레이어: ${p.name}
+잔고: ${chipStr(p)}
+총 가치: ${getPlayerChipValue(p)}`;
 }
 
 const FORMULA_CARD_SUITS = [
@@ -5009,7 +5026,10 @@ app.post('/logs/test', async (req, res) => {
 
 async function handleBalanceLog(req, res, playerId) {
   try {
-    await loadPlayersByIds([playerId]);
+    await Promise.all([
+      loadPlayersByIds([playerId]),
+      loadRatesCached()
+    ]);
 
     const player = getPlayerById(playerId);
 
@@ -5036,6 +5056,62 @@ app.post('/balance-log', async (req, res) => {
 
 app.post('/players/:playerId/balance-log', async (req, res) => {
   return handleBalanceLog(req, res, req.params.playerId);
+});
+
+// 관리자 칩 조정
+app.post('/chips/adjust', async (req, res) => {
+  try {
+    const { playerId, color, amount, action } = req.body;
+    await loadPlayersByIds([playerId]);
+
+    const player = getPlayerById(playerId);
+    const adjustAmount = toChipAmount(amount);
+    const normalizedAction = String(action || '').toLowerCase();
+
+    if (!player) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    if (!validateColor(color)) {
+      return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
+    }
+
+    if (!['add', 'subtract'].includes(normalizedAction)) {
+      return res.status(400).json({ error: '조정 방식이 올바르지 않습니다.' });
+    }
+
+    if (!Number.isFinite(adjustAmount) || adjustAmount <= 0) {
+      return res.status(400).json({ error: '조정 수량이 올바르지 않습니다.' });
+    }
+
+    if (normalizedAction === 'subtract' && player[color] < adjustAmount) {
+      return res.status(400).json({ error: '보유 칩이 부족합니다.' });
+    }
+
+    if (normalizedAction === 'add') {
+      player[color] += adjustAmount;
+    } else {
+      player[color] -= adjustAmount;
+    }
+
+    const [log] = await Promise.all([
+      addLog(
+        'chip-adjust',
+        makeChipAdjustLog(player, color, adjustAmount, normalizedAction),
+        makeChipAdjustPublicLog(player, color, adjustAmount, normalizedAction)
+      ),
+      savePlayers([player])
+    ]);
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({ ok: true, log: log.text, logs: [log], players: serializePlayers([player]) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '칩 조정 중 오류가 발생했습니다.' });
+  }
 });
 
 // 환율 조회
