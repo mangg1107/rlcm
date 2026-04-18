@@ -49,7 +49,7 @@
 
     <div class="form-row">
       <label>Bet amount</label><br />
-      <input id="amount" type="number" min="1" value="1" oninput="updateBalanceHint()" />
+      <input id="amount" type="number" min="0" value="1" oninput="updateBalanceHint()" />
     </div>
     <div class="hint" id="balanceHint"></div>
 
@@ -366,7 +366,7 @@
       const bet = getChipAmount(amount);
       const gameType = document.getElementById('gameType').value;
 
-      if (!Number.isFinite(bet) || bet <= 0) {
+      if (!Number.isFinite(bet) || bet < 0) {
         alert('베팅 수량이 올바르지 않습니다.');
         return false;
       }
@@ -404,7 +404,7 @@
     function validateRussianRouletteBet(participantIds, color, amount) {
       const bet = getChipAmount(amount);
 
-      if (!Number.isFinite(bet) || bet <= 0) {
+      if (!Number.isFinite(bet) || bet < 0) {
         alert('베팅 수량이 올바르지 않습니다.');
         return false;
       }
@@ -564,7 +564,7 @@
         return false;
       }
 
-      if (!Number.isFinite(bet) || bet <= 0) {
+      if (!Number.isFinite(bet) || bet < 0) {
         alert('Bet amount is invalid.');
         return false;
       }

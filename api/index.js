@@ -5170,15 +5170,16 @@ app.post('/chips/adjust', async (req, res) => {
       return res.status(400).json({ error: '조정 수량이 올바르지 않습니다.' });
     }
 
-    if (normalizedAction === 'subtract' && player[color] < adjustAmount) {
+    const currentAmount = readChipValue(player[color]);
+    const nextAmount = normalizedAction === 'add'
+      ? currentAmount + adjustAmount
+      : currentAmount - adjustAmount;
+
+    if (nextAmount < 0) {
       return res.status(400).json({ error: '보유 칩이 부족합니다.' });
     }
 
-    if (normalizedAction === 'add') {
-      player[color] += adjustAmount;
-    } else {
-      player[color] -= adjustAmount;
-    }
+    player[color] = nextAmount;
 
     const [log] = await Promise.all([
       addLog(
@@ -5242,7 +5243,7 @@ app.post('/formula-high-low/start', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
@@ -5472,7 +5473,7 @@ app.post('/pvp-baccarat/start', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
@@ -5541,7 +5542,7 @@ app.post('/pvp-blackjack/start', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
@@ -5654,7 +5655,7 @@ app.post('/blackjack/start', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
@@ -5802,7 +5803,7 @@ app.post('/baccarat/start', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
@@ -5960,7 +5961,7 @@ app.post('/russian-roulette/start', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 
@@ -6110,7 +6111,7 @@ app.post('/game', async (req, res) => {
       return res.status(400).json({ error: '칩 색이 올바르지 않습니다.' });
     }
 
-    if (!Number.isFinite(bet) || bet <= 0) {
+    if (!Number.isFinite(bet) || bet < 0) {
       return res.status(400).json({ error: '베팅 수량이 올바르지 않습니다.' });
     }
 

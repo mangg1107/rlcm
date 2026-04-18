@@ -278,9 +278,10 @@
       const nextBalance = Number.isFinite(amount) && amount > 0
         ? action === 'add' ? balance + amount : balance - amount
         : balance;
+      const status = action === 'subtract' && nextBalance < 0 ? ' / 잔고 부족' : '';
 
       document.getElementById('adjustHint').textContent = player
-        ? `현재 ${CHIP_LABELS[color]} ${balance}개 / 적용 후 ${nextBalance}개`
+        ? `현재 ${CHIP_LABELS[color]} ${balance}개 / 적용 후 ${nextBalance}개${status}`
         : '';
     }
 
@@ -313,6 +314,8 @@
 
     async function adjustChip() {
       const action = document.getElementById('adjustAction').value;
+      const player = getPlayerById(document.getElementById('adjustPlayer').value);
+      const color = document.getElementById('adjustColor').value;
       const amount = getChipAmount(document.getElementById('adjustAmount').value);
 
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -320,13 +323,23 @@
         return;
       }
 
+      if (!player) {
+        alert('플레이어를 선택하세요.');
+        return;
+      }
+
+      if (action === 'subtract' && getChipBalance(player, color) < amount) {
+        alert('보유 칩이 부족합니다.');
+        return;
+      }
+
       const res = await fetch('/api/chips/adjust', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          playerId: Number(document.getElementById('adjustPlayer').value),
+          playerId: player.id,
           action,
-          color: document.getElementById('adjustColor').value,
+          color,
           amount
         })
       });
