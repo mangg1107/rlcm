@@ -6021,6 +6021,12 @@ app.post('/russian-roulette/trigger', async (req, res) => {
     }
 
     await loadPlayersByIds(session.participantIds);
+    const participants = session.participantIds.map(getPlayerById);
+
+    if (participants.some((player) => !player)) {
+      await deleteRussianRouletteSession(session.id);
+      return res.status(404).json({ error: '참가자를 찾을 수 없어 세션을 종료했습니다.' });
+    }
 
     const eliminatedIndex = Math.floor(Math.random() * session.activeIds.length);
     const [eliminatedId] = session.activeIds.splice(eliminatedIndex, 1);
