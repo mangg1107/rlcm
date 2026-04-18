@@ -2219,10 +2219,40 @@ function getSignedChipAmount(amount) {
   return chipAmount > 0 ? `+${chipAmount}` : String(chipAmount);
 }
 
-function setBlackjackChipResult(player, session, delta) {
+function getChipLabel(color) {
+  return CHIP_LABELS[color] || color;
+}
+
+function makeChipResultText(color, delta, balance) {
+  const label = getChipLabel(color);
+  return `${label} ${getSignedChipAmount(delta)} / 현재 잔고 ${label} ${toChipAmount(balance)}`;
+}
+
+function makePlayerChipResultText(player, color, delta) {
+  return makeChipResultText(color, delta, player?.[color] || 0);
+}
+
+function makePlayerChipResultFromBefore(player, color, beforeBalance) {
+  const balance = player?.[color] || 0;
+  return makeChipResultText(color, balance - beforeBalance, balance);
+}
+
+function makeNamedChipResultText(player, color, delta) {
+  return `${player.name}: ${makePlayerChipResultText(player, color, delta)}`;
+}
+
+function chipResultLine(resultChipText) {
+  return resultChipText ? `\n결과 칩: ${resultChipText}` : '';
+}
+
+function setSessionChipResult(player, session, delta) {
   session.resultChipDelta = toChipAmount(delta);
   session.resultChipBalance = player[session.color] || 0;
-  session.resultChipText = `${CHIP_LABELS[session.color] || session.color} ${getSignedChipAmount(session.resultChipDelta)} / 현재 잔고 ${CHIP_LABELS[session.color] || session.color} ${session.resultChipBalance}`;
+  session.resultChipText = makeChipResultText(session.color, session.resultChipDelta, session.resultChipBalance);
+}
+
+function setBlackjackChipResult(player, session, delta) {
+  setSessionChipResult(player, session, delta);
 }
 
 function blackjackChoiceText(session) {
@@ -2230,7 +2260,7 @@ function blackjackChoiceText(session) {
 }
 
 function blackjackChipResultText(session) {
-  return session.done && session.resultChipText ? `\n결과 칩: ${session.resultChipText}` : '';
+  return session.done ? chipResultLine(session.resultChipText) : '';
 }
 
 function makeBlackjackProgressLog(player, session, action, resultText) {
@@ -2715,19 +2745,25 @@ function getBaccaratState(session) {
     done: session.done || false,
     outcome: session.outcome || '',
     push,
-    win
+    win,
+    resultChipDelta: Number.isFinite(session.resultChipDelta) ? session.resultChipDelta : null,
+    resultChipBalance: Number.isFinite(session.resultChipBalance) ? session.resultChipBalance : null,
+    resultChipText: session.resultChipText || ''
   };
 }
 
 function settleBaccaratBet(player, session) {
   const push = session.outcome === 'TIE' && session.side !== 'TIE';
   const win = session.side === session.outcome;
+  const beforeBalance = player[session.color] || 0;
 
   if (win) {
     player[session.color] += toChipAmount(session.bet * getBaccaratPayout(session.side));
   } else if (!push) {
     player[session.color] -= session.bet;
   }
+
+  setSessionChipResult(player, session, (player[session.color] || 0) - beforeBalance);
 
   return { win, push };
 }
@@ -2782,7 +2818,7 @@ function makeBaccaratProgressLog(player, session, action, resultText) {
 ${baccaratStateText(session)}
 결과: ${session.outcome || resultText}
 판정: ${resultText}
-현재: ${chipStr(player)}`;
+현재: ${chipStr(player)}${session.done ? chipResultLine(session.resultChipText) : ''}`;
 }
 
 function makeBaccaratPublicLog(player, session, action, resultText) {
@@ -2801,7 +2837,7 @@ BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
 PLAYER: ${state.playerCards.join(', ')} (${state.playerTotal})
 BANKER: ${state.bankerCards.join(', ')} (${state.bankerTotal})
 결과: ${state.outcome}
-판정: ${resultText}`;
+판정: ${resultText}${chipResultLine(session.resultChipText)}`;
 }
 
 function settlePvpBet(playerOne, playerTwo, color, bet, winnerKey) {
@@ -2851,6 +2887,9 @@ function getPvpSessionState(session) {
     winnerKey: session.winnerKey || '',
     winnerName: session.winnerKey ? getPvpWinnerName({ name: playerOneName }, { name: playerTwoName }, session.winnerKey) : '',
     result: session.result || '',
+    playerOneResultChipText: session.playerOneResultChipText || '',
+    playerTwoResultChipText: session.playerTwoResultChipText || '',
+    resultChipTexts: session.resultChipTexts || [],
     remainingCards: session.gameType === 'pvpbaccarat'
       ? (session.shoe || []).length
       : (session.deck || []).length
@@ -2898,12 +2937,20 @@ function getPvpWinnerKey(session) {
 
 function finishPvpSession(playerOne, playerTwo, session) {
   const winnerKey = getPvpWinnerKey(session);
+  const playerOneBefore = playerOne[session.color] || 0;
+  const playerTwoBefore = playerTwo[session.color] || 0;
   settlePvpBet(playerOne, playerTwo, session.color, session.bet, winnerKey);
   session.done = true;
   session.winnerKey = winnerKey;
   session.result = winnerKey === 'tie'
     ? '무승부'
     : `${getPvpWinnerName(playerOne, playerTwo, winnerKey)} 승리`;
+  session.playerOneResultChipText = makePlayerChipResultFromBefore(playerOne, session.color, playerOneBefore);
+  session.playerTwoResultChipText = makePlayerChipResultFromBefore(playerTwo, session.color, playerTwoBefore);
+  session.resultChipTexts = [
+    `${playerOne.name}: ${session.playerOneResultChipText}`,
+    `${playerTwo.name}: ${session.playerTwoResultChipText}`
+  ];
   return session.result;
 }
 
@@ -2990,6 +3037,7 @@ ${playerOne.name} 패: ${state.playerOneCards.join(', ')} (${valueLabel}: ${play
 ${playerTwo.name} 패: ${state.playerTwoCards.join(', ')} (${valueLabel}: ${playerTwoValue})
 결과: ${resultText}
 승자: ${state.winnerName || '-'}
+${state.done && state.resultChipTexts.length ? `결과 칩:\n${state.resultChipTexts.join('\n')}` : ''}
 ${playerOne.name}: ${chipStr(playerOne)}
 ${playerTwo.name}: ${chipStr(playerTwo)}`;
 }
@@ -3033,7 +3081,7 @@ function makePvpPlayerPublicSection(viewer, state, session, viewerKey) {
 
   return `${viewer.name}
 내 패: ${formatPvpCardsForViewer(viewerCards, valueLabel, viewerValue, true)}
-상대 패: ${formatPvpOpponentCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent, session.gameType)}`;
+상대 패: ${formatPvpOpponentCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent, session.gameType)}${state.done ? chipResultLine(state[`${viewerKey}ResultChipText`]) : ''}`;
 }
 
 function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
@@ -3046,7 +3094,7 @@ function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
 플레이어 2: ${playerTwo.name}
 베팅: ${session.color} ${session.bet}
 결과: ${resultText}
-승자: ${state.winnerName || '-'}
+승자: ${state.winnerName || '-'}${state.done && state.resultChipTexts.length ? `\n결과 칩:\n${state.resultChipTexts.join('\n')}` : ''}
 
 [플레이어 1 공개]
 ${makePvpPlayerPublicSection(playerOne, state, session, 'playerOne')}
@@ -3112,7 +3160,8 @@ function getRussianRouletteState(session) {
     round: session.round,
     done: session.done || false,
     result: session.result || '',
-    lastAction: session.lastAction || ''
+    lastAction: session.lastAction || '',
+    resultChipTexts: session.resultChipTexts || []
   };
 }
 
@@ -3128,7 +3177,7 @@ function makeRussianRouletteLog(session) {
 라운드: ${state.round}
 베팅: ${state.color} ${state.bet}
 팟: ${state.color} ${state.pot}
-결과: ${state.lastAction}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}`;
+결과: ${state.lastAction}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}${state.done && state.resultChipTexts.length ? `\n결과 칩:\n${state.resultChipTexts.join('\n')}` : ''}`;
 }
 
 function makeRussianRoulettePublicLog(session) {
@@ -3142,45 +3191,45 @@ function makeRussianRoulettePublicLog(session) {
   return `생존자: ${active}
 탈락자: ${eliminated}
 라운드: ${state.round}
-결과: ${resultText}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}`;
+결과: ${resultText}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}${state.done && state.resultChipTexts.length ? `\n결과 칩:\n${state.resultChipTexts.join('\n')}` : ''}`;
 }
 
 // =========================
 // 🎮 게임별 로그
 // =========================
-function logRoulette(p, color, bet, pick, detail, result, multiplier, win) {
+function logRoulette(p, color, bet, pick, detail, result, multiplier, win, resultChipText = '') {
   return `🎡 룰렛
 ${p.name} | 칩: ${color} ${bet}
 베팅 종류: ${pick}
 세부: ${detail || '-'}
 결과: ${result}
 배율: ${multiplier}배
-판정: ${win ? '승리' : '패배'}
+판정: ${win ? '승리' : '패배'}${chipResultLine(resultChipText)}
 현재: ${chipStr(p)}`;
 }
 
-function logHighLow(p, color, bet, choice, card, multiplier, win) {
+function logHighLow(p, color, bet, choice, card, multiplier, win, resultChipText = '') {
   return `📈 하이로우
 ${p.name} | 칩: ${color} ${bet}
 선택: ${choice}
 오픈 카드: ${card || '-'}
 배율: ${multiplier}배
-판정: ${multiplier === 'push' ? '무승부' : win ? '승리' : '패배'}
+판정: ${multiplier === 'push' ? '무승부' : win ? '승리' : '패배'}${chipResultLine(resultChipText)}
 현재: ${chipStr(p)}`;
 }
 
-function logBaccarat(p, color, bet, side, result, multiplier, turn, win) {
+function logBaccarat(p, color, bet, side, result, multiplier, turn, win, resultChipText = '') {
   return `🃏 바카라
 ${p.name} | 칩: ${color} ${bet}
 턴: ${turn}
 선택: ${side}
 결과: ${result}
 배율: ${multiplier}배
-판정: ${multiplier === 'push' ? '무승부' : win ? '승리' : '패배'}
+판정: ${multiplier === 'push' ? '무승부' : win ? '승리' : '패배'}${chipResultLine(resultChipText)}
 현재: ${chipStr(p)}`;
 }
 
-function logBlackjack(p, color, bet, action, playerSum, dealerSum, multiplier, turn, win) {
+function logBlackjack(p, color, bet, action, playerSum, dealerSum, multiplier, turn, win, resultChipText = '') {
   return `♠ 블랙잭
 ${p.name} | 칩: ${color} ${bet}
 턴: ${turn}
@@ -3188,17 +3237,17 @@ ${p.name} | 칩: ${color} ${bet}
 플레이어: ${playerSum}
 딜러: ${dealerSum}
 배율: ${multiplier}배
-판정: ${win ? '승리' : '패배'}
+판정: ${win ? '승리' : '패배'}${chipResultLine(resultChipText)}
 현재: ${chipStr(p)}`;
 }
 
-function logRedBlack(p, color, bet, pick, result, multiplier, win) {
+function logRedBlack(p, color, bet, pick, result, multiplier, win, resultChipText = '') {
   return `🟥⬛ 레드 앤 블랙
 ${p.name} | 칩: ${color} ${bet}
 선택: ${pick}
 결과: ${result}
 배율: ${multiplier}배
-판정: ${win ? '승리' : '패배'}
+판정: ${win ? '승리' : '패배'}${chipResultLine(resultChipText)}
 현재: ${chipStr(p)}`;
 }
 
@@ -3206,7 +3255,7 @@ function getLogJudgement(multiplier, win) {
   return multiplier === 'push' ? '무승부' : win ? '승리' : '패배';
 }
 
-function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
+function makeGameLog(gameType, p, color, amount, extra, multiplier, win, resultChipText = '') {
   switch (gameType) {
     case 'roulette':
       return logRoulette(
@@ -3217,7 +3266,8 @@ function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
         extra.detail,
         extra.result,
         multiplier,
-        win
+        win,
+        resultChipText
       );
     case 'highlow':
       return logHighLow(
@@ -3227,7 +3277,8 @@ function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
         extra.choice,
         extra.card,
         multiplier,
-        win
+        win,
+        resultChipText
       );
     case 'baccarat':
       return logBaccarat(
@@ -3238,7 +3289,8 @@ function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
         extra.result,
         multiplier,
         extra.turn,
-        win
+        win,
+        resultChipText
       );
     case 'blackjack':
       return logBlackjack(
@@ -3250,7 +3302,8 @@ function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
         extra.dealerSum,
         multiplier,
         extra.turn,
-        win
+        win,
+        resultChipText
       );
     case 'redblack':
       return logRedBlack(
@@ -3260,19 +3313,21 @@ function makeGameLog(gameType, p, color, amount, extra, multiplier, win) {
         extra.pick,
         extra.result,
         multiplier,
-        win
+        win,
+        resultChipText
       );
     default:
       return `🎮 게임 결과
 ${p.name} | 칩: ${color} ${amount}
 배율: ${multiplier}배
-판정: ${win ? '승리' : '패배'}
+판정: ${win ? '승리' : '패배'}${chipResultLine(resultChipText)}
 현재: ${chipStr(p)}`;
   }
 }
 
-function makeGamePublicLog(gameType, p, color, amount, extra, multiplier, win) {
+function makeGamePublicLog(gameType, p, color, amount, extra, multiplier, win, resultChipText = '') {
   const judgement = getLogJudgement(multiplier, win);
+  const chipLine = chipResultLine(resultChipText);
 
   switch (gameType) {
     case 'roulette':
@@ -3281,20 +3336,20 @@ function makeGamePublicLog(gameType, p, color, amount, extra, multiplier, win) {
 베팅 종류: ${extra.pick}
 결과: ${extra.result}
 배율: ${multiplier}배
-판정: ${judgement}`;
+판정: ${judgement}${chipLine}`;
     case 'highlow':
       return `플레이어: ${p.name}
 베팅: ${color} ${amount}
 선택: ${extra.choice}
 오픈 카드: ${extra.card || '-'}
 배율: ${multiplier}배
-판정: ${judgement}`;
+판정: ${judgement}${chipLine}`;
     case 'baccarat':
       return `플레이어: ${p.name}
 베팅: ${extra.side} / ${color} ${amount}
 결과: ${extra.result}
 배율: ${multiplier}배
-판정: ${judgement}`;
+판정: ${judgement}${chipLine}`;
     case 'blackjack':
       return `플레이어: ${p.name}
 베팅: ${color} ${amount}
@@ -3303,19 +3358,19 @@ function makeGamePublicLog(gameType, p, color, amount, extra, multiplier, win) {
 플레이어: ${extra.playerSum || '-'}
 딜러: ${extra.dealerSum || '-'}
 배율: ${multiplier}배
-판정: ${judgement}`;
+판정: ${judgement}${chipLine}`;
     case 'redblack':
       return `플레이어: ${p.name}
 베팅: ${color} ${amount}
 선택: ${extra.pick}
 결과: ${extra.result}
 배율: ${multiplier}배
-판정: ${judgement}`;
+판정: ${judgement}${chipLine}`;
     default:
       return `플레이어: ${p.name}
 베팅: ${color} ${amount}
 배율: ${multiplier}배
-판정: ${judgement}`;
+판정: ${judgement}${chipLine}`;
   }
 }
 
@@ -4821,12 +4876,14 @@ function getCombinationWinnerNames(winnerIds) {
 }
 
 function getCombinationBettingSessionState(session) {
+  const resultChipTextByPlayerId = session.resultChipTextByPlayerId || {};
   const participants = (session.participantStates || []).map((state) => ({
     id: Number(state.playerId),
     name: getCombinationPlayerName(state.playerId),
     numbers: state.numbers || [],
     operators: COMBINATION_OPERATOR_CARDS.map((operator) => COMBINATION_OPERATOR_LABELS[operator]),
     submission: state.submission || '',
+    resultChipText: resultChipTextByPlayerId[Number(state.playerId)] || '',
     evaluation: state.evaluation ? {
       expression: state.evaluation.expression,
       value: state.evaluation.valueText,
@@ -4848,7 +4905,8 @@ function getCombinationBettingSessionState(session) {
     stage: session.stage,
     winnerIds: session.winnerIds || [],
     winnerNames: getCombinationWinnerNames(session.winnerIds || []),
-    result: session.result || ''
+    result: session.result || '',
+    resultChipTexts: session.resultChipTexts || []
   };
 }
 
@@ -4924,6 +4982,7 @@ function makeCombinationBettingSettlementLog(participants, session, payouts) {
 버림: ${session.color} ${discarded}개
 승자: ${getCombinationWinnerNames(session.winnerIds)}
 결과: ${session.result}
+${session.resultChipTexts?.length ? `결과 칩:\n${session.resultChipTexts.join('\n')}` : ''}
 
 ${results}
 
@@ -4941,7 +5000,7 @@ function makeCombinationBettingSettlementPublicLog(participants, session, payout
 총 팟: ${session.color} ${session.pot}개
 지급 합계: ${session.color} ${totalPaid}개
 버림: ${session.color} ${discarded}개
-승자: ${getCombinationWinnerNames(session.winnerIds)}`;
+승자: ${getCombinationWinnerNames(session.winnerIds)}${session.resultChipTexts?.length ? `\n결과 칩:\n${session.resultChipTexts.join('\n')}` : ''}`;
 }
 
 // =========================
@@ -5350,6 +5409,15 @@ async function handleFormulaHighLowResolve(req, res) {
     session.result = winnerIds.length === 1
       ? `${getCombinationPlayerName(winnerIds[0])} 승리`
       : `동점 / 팟 분배: ${getCombinationWinnerNames(winnerIds)}`;
+    session.resultChipTextByPlayerId = Object.fromEntries(
+      participants.map((player) => {
+        const payout = payouts.get(Number(player.id)) || 0;
+        return [Number(player.id), makeChipResultText(session.color, payout - session.bet, player[session.color] || 0)];
+      })
+    );
+    session.resultChipTexts = participants.map((player) => (
+      `${player.name}: ${session.resultChipTextByPlayerId[Number(player.id)]}`
+    ));
 
     const [log] = await Promise.all([
       addLog(
@@ -5972,6 +6040,12 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       session.winnerId = winner.id;
       session.result = `${winner.name} 승리`;
       session.lastAction += `. 최종 승자: ${winner.name}. 팟 ${session.color} ${session.pot} 지급.`;
+      session.resultChipTexts = participants.map((player) => {
+        const delta = Number(player.id) === Number(winner.id)
+          ? session.pot - session.bet
+          : -session.bet;
+        return makeNamedChipResultText(player, session.color, delta);
+      });
 
       const [log] = await Promise.all([
         addLog(
@@ -5988,7 +6062,7 @@ app.post('/russian-roulette/trigger', async (req, res) => {
       emitRealtime('log', lastLogText);
       emitRealtime('logs', logHistory);
 
-      return res.json({ ok: true, fired: true, state: getRussianRouletteState(session), log: log.text, logs: [log], players: serializePlayers([winner]) });
+      return res.json({ ok: true, fired: true, state: getRussianRouletteState(session), log: log.text, logs: [log], players: serializePlayers(participants) });
     }
 
     session.round += 1;
@@ -6048,6 +6122,7 @@ app.post('/game', async (req, res) => {
     let logMultiplier = mul;
     let logExtra = extra;
     let result = undefined;
+    const beforeBalance = player[color] || 0;
 
     if (gameType === 'roulette') {
       const roulette = playRoulette(player, color, bet, extra);
@@ -6085,12 +6160,15 @@ app.post('/game', async (req, res) => {
     }
 
     consumeGameLimit(player, gameType);
+    const resultChipDelta = (player[color] || 0) - beforeBalance;
+    const resultChipBalance = player[color] || 0;
+    const resultChipText = makeChipResultText(color, resultChipDelta, resultChipBalance);
 
     const [log] = await Promise.all([
       addLog(
         gameType,
-        makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win),
-        makeGamePublicLog(gameType, player, color, bet, logExtra, logMultiplier, win)
+        makeGameLog(gameType, player, color, bet, logExtra, logMultiplier, win, resultChipText),
+        makeGamePublicLog(gameType, player, color, bet, logExtra, logMultiplier, win, resultChipText)
       ),
       savePlayers([player])
     ]);
@@ -6099,7 +6177,17 @@ app.post('/game', async (req, res) => {
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, win, log: log.text, logs: [log], result, players: serializePlayers([player]) });
+    res.json({
+      ok: true,
+      win,
+      log: log.text,
+      logs: [log],
+      result,
+      resultChipDelta,
+      resultChipBalance,
+      resultChipText,
+      players: serializePlayers([player])
+    });
   } catch (err) {
     console.error(err);
     res.status(err.status || 500).json({ error: err.message || '게임 처리 중 오류가 발생했습니다.' });

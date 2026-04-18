@@ -1006,15 +1006,16 @@
 
       renderLogs(data.logs);
       mergePlayers(data.players);
+      const resultChipText = data.resultChipText ? `\n${data.resultChipText}` : '';
       alert(gameType === 'roulette'
-        ? `Roulette result: ${data.result} / ${data.win ? 'win' : 'loss'}`
+        ? `Roulette result: ${data.result} / ${data.win ? 'win' : 'loss'}${resultChipText}`
         : gameType === 'highlow'
-          ? `High Low card: ${data.result} / ${data.win ? 'win' : 'loss or push'}`
+          ? `High Low card: ${data.result} / ${data.win ? 'win' : 'loss or push'}${resultChipText}`
         : gameType === 'baccarat'
-          ? `Baccarat result: ${data.result} / ${data.win ? 'win' : 'loss or push'}`
+          ? `Baccarat result: ${data.result} / ${data.win ? 'win' : 'loss or push'}${resultChipText}`
         : gameType === 'redblack'
-          ? `Red Black result: ${data.result} / ${data.win ? 'win' : 'loss'}`
-        : data.win ? 'Win processed.' : 'Loss processed.');
+          ? `Red Black result: ${data.result} / ${data.win ? 'win' : 'loss'}${resultChipText}`
+        : `${data.win ? 'Win processed.' : 'Loss processed.'}${resultChipText}`);
     }
 
     function getRouletteDetail() {
@@ -1077,7 +1078,7 @@
 
       if (data.state.done) {
         activePvpSessionId = null;
-        alert(data.state.result);
+        alert(`${data.state.result}${data.state.resultChipTexts?.length ? `\n${data.state.resultChipTexts.join('\n')}` : ''}`);
       }
     }
 
@@ -1109,7 +1110,7 @@ Cards: ${formatPvpCards(state.playerTwoCards)}
 ${valueLabel}: ${playerTwoValue ?? '-'}
 
 Result: ${state.result || 'In progress'}
-Winner: ${state.winnerName || '-'}`;
+Winner: ${state.winnerName || '-'}${state.resultChipTexts?.length ? `\nResult chips:\n${state.resultChipTexts.join('\n')}` : ''}`;
       updatePvpControls(state);
     }
 
@@ -1195,7 +1196,7 @@ Winner: ${state.winnerName || '-'}`;
       renderLogs(data.logs);
       mergePlayers(data.players);
       activeFormulaHighLowSessionId = null;
-      alert(data.state.result || 'Combination Betting resolved.');
+      alert(`${data.state.result || 'Combination Betting resolved.'}${data.state.resultChipTexts?.length ? `\n${data.state.resultChipTexts.join('\n')}` : ''}`);
     }
 
     function clearFormulaHighLowFormulaInputs() {
@@ -1249,7 +1250,8 @@ Winner: ${state.winnerName || '-'}`;
 Numbers: ${(participant.numbers || []).join(', ') || '-'}
 Operators: ${formatCombinationOperatorsForDisplay(participant.operators) || '-'}
 Formula: ${participant.submission || '-'}
-Evaluation: ${evaluation}`;
+Evaluation: ${evaluation}
+Result chips: ${participant.resultChipText || '-'}`;
         })
         .join('\n\n');
 
@@ -1264,7 +1266,7 @@ Operators: ${formatCombinationOperatorsForDisplay(state.operatorCards)}
 ${participantText || 'No participants'}
 
 Winner: ${state.winnerNames || '-'}
-Result: ${state.result || 'in progress'}`;
+Result: ${state.result || 'in progress'}${state.resultChipTexts?.length ? `\nResult chips:\n${state.resultChipTexts.join('\n')}` : ''}`;
 
       renderFormulaSubmissionInputs(state);
       formulaFinalButton.disabled = true;
@@ -1329,7 +1331,7 @@ Result: ${state.result || 'in progress'}`;
 
       if (data.state.done) {
         activeRussianRouletteSessionId = null;
-        alert(data.state.result);
+        alert(`${data.state.result}${data.state.resultChipTexts?.length ? `\n${data.state.resultChipTexts.join('\n')}` : ''}`);
       }
     }
 
@@ -1343,7 +1345,7 @@ Pot: ${state.color} ${state.pot}
 Round: ${state.round}
 Active: ${activePlayers}
 Eliminated: ${eliminatedPlayers}
-Result: ${state.lastAction}`;
+Result: ${state.lastAction}${state.resultChipTexts?.length ? `\nResult chips:\n${state.resultChipTexts.join('\n')}` : ''}`;
 
       russianTriggerButton.disabled = state.done;
     }
@@ -1377,7 +1379,7 @@ Result: ${state.lastAction}`;
       mergePlayers(data.players);
 
       if (data.state.done) {
-        alert(`Baccarat ${data.state.outcome}`);
+        alert(`Baccarat ${data.state.outcome}${data.state.resultChipText ? `\n${data.state.resultChipText}` : ''}`);
       }
     }
 
@@ -1402,7 +1404,7 @@ Result: ${state.lastAction}`;
 
       if (data.state.done) {
         activeBaccaratPlayerId = null;
-        alert(`Baccarat ${data.state.outcome}`);
+        alert(`Baccarat ${data.state.outcome}${data.state.resultChipText ? `\n${data.state.resultChipText}` : ''}`);
       }
     }
 
@@ -1414,7 +1416,7 @@ Player action: ${state.playerAction || '-'}
 Player third: ${state.playerThirdCard || '-'}
 Banker third: ${state.bankerThirdCard || '-'}
 Remaining cards: ${state.remainingCards}
-Status: ${state.done ? `${state.outcome}${state.push ? ' push' : state.win ? ' win' : ' loss'}` : 'choose Hit or Stand'}`;
+Status: ${state.done ? `${state.outcome}${state.push ? ' push' : state.win ? ' win' : ' loss'}` : 'choose Hit or Stand'}${state.resultChipText ? `\nResult chips: ${state.resultChipText}` : ''}`;
 
       baccaratHitButton.disabled = state.done;
       baccaratStandButton.disabled = state.done;
