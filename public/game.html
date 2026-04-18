@@ -1467,7 +1467,7 @@ Status: ${state.done ? `${state.outcome}${state.push ? ' push' : state.win ? ' w
 
       if (data.state.done) {
         activeBlackjackPlayerId = null;
-        alert(`Blackjack ${data.state.result}`);
+        alert(`Blackjack ${data.state.result}${data.state.resultChipText ? `\n${data.state.resultChipText}` : ''}`);
       }
     }
 
@@ -1478,7 +1478,7 @@ Dealer cards: ${state.dealerCards.join(', ')} (${state.dealerValue})
 Draw result: ${state.lastDraw || '-'}
 Dealer draws: ${state.dealerDraws.length ? state.dealerDraws.join(', ') : '-'}
 Remaining cards: ${state.remainingCards}
-Status: ${state.done ? state.result : 'in progress'}`;
+Status: ${state.done ? state.result : 'choose Hit or Stand'}${state.resultChipText ? `\nResult chips: ${state.resultChipText}` : ''}`;
 
       hitButton.disabled = state.done;
       standButton.disabled = state.done;

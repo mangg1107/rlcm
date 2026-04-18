@@ -2198,7 +2198,10 @@ function getBlackjackState(session) {
     dealerDraws: session.dealerDraws || [],
     remainingCards: session.deck ? session.deck.length : 0,
     done: session.done || false,
-    result: session.result || ''
+    result: session.result || '',
+    resultChipDelta: Number.isFinite(session.resultChipDelta) ? session.resultChipDelta : null,
+    resultChipBalance: Number.isFinite(session.resultChipBalance) ? session.resultChipBalance : null,
+    resultChipText: session.resultChipText || ''
   };
 }
 
@@ -2211,14 +2214,33 @@ function blackjackStateText(session) {
 남은 카드: ${state.remainingCards}`;
 }
 
+function getSignedChipAmount(amount) {
+  const chipAmount = toChipAmount(amount);
+  return chipAmount > 0 ? `+${chipAmount}` : String(chipAmount);
+}
+
+function setBlackjackChipResult(player, session, delta) {
+  session.resultChipDelta = toChipAmount(delta);
+  session.resultChipBalance = player[session.color] || 0;
+  session.resultChipText = `${CHIP_LABELS[session.color] || session.color} ${getSignedChipAmount(session.resultChipDelta)} / 현재 잔고 ${CHIP_LABELS[session.color] || session.color} ${session.resultChipBalance}`;
+}
+
+function blackjackChoiceText(session) {
+  return session.done ? '' : '\n선택 가능: Hit 또는 Stand';
+}
+
+function blackjackChipResultText(session) {
+  return session.done && session.resultChipText ? `\n결과 칩: ${session.resultChipText}` : '';
+}
+
 function makeBlackjackProgressLog(player, session, action, resultText) {
   return `블랙잭 진행
 플레이어: ${player.name}
 칩: ${session.color} ${session.bet}
 행동: ${action}
-${blackjackStateText(session)}
+${blackjackStateText(session)}${blackjackChoiceText(session)}
 결과: ${resultText}
-현재: ${chipStr(player)}`;
+현재: ${chipStr(player)}${blackjackChipResultText(session)}`;
 }
 
 function getPublicDealerCards(session) {
@@ -2234,7 +2256,8 @@ function makeBlackjackPublicLog(player, session, action, resultText) {
 
   if (!session.done) {
     return `플레이어 패: ${state.playerCards.join(', ')} (${state.playerValue})
-딜러 패: ${getPublicDealerCards(session)}`;
+딜러 패: ${getPublicDealerCards(session)}
+선택 가능: Hit 또는 Stand`;
   }
 
   const dealerValue = session.done ? ` (${state.dealerValue})` : '';
@@ -2243,7 +2266,7 @@ function makeBlackjackPublicLog(player, session, action, resultText) {
 베팅: ${session.color} ${session.bet}
 플레이어 패: ${state.playerCards.join(', ')} (${state.playerValue})
 딜러 패: ${getPublicDealerCards(session)}${dealerValue}
-결과: ${resultText}`;
+결과: ${resultText}${blackjackChipResultText(session)}`;
 }
 
 function finishBlackjackSession(player, session) {
@@ -2264,14 +2287,18 @@ function finishBlackjackSession(player, session) {
   if (playerValue > 21) {
     player[session.color] -= session.bet;
     session.result = '패배';
+    setBlackjackChipResult(player, session, -session.bet);
   } else if (dealerValue > 21 || playerValue > dealerValue) {
     player[session.color] += session.bet;
     session.result = '승리';
+    setBlackjackChipResult(player, session, session.bet);
   } else if (playerValue < dealerValue) {
     player[session.color] -= session.bet;
     session.result = '패배';
+    setBlackjackChipResult(player, session, -session.bet);
   } else {
     session.result = '무승부';
+    setBlackjackChipResult(player, session, 0);
   }
 
   session.done = true;
