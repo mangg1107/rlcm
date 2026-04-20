@@ -515,6 +515,22 @@ textarea:focus {
   margin-top: 0;
 }
 
+.pvp-result-copies {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.pvp-result-copies[hidden] {
+  display: none;
+}
+
+.pvp-result-copies button {
+  flex: 1 1 160px;
+  margin-left: 0;
+}
+
 .log-meta {
   display: flex;
   gap: 8px;

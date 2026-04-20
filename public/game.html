@@ -57,17 +57,17 @@
       <div class="form-row">
         <label>Roulette bet type</label><br />
         <select id="rouletteBetType" onchange="updateRouletteDetailInput()">
-          <option value="number">Number (35:1)</option>
-          <option value="split">Split, 2 numbers (17:1)</option>
-          <option value="street">Street, 3 numbers (11:1)</option>
-          <option value="corner">Corner, 4 numbers (8:1)</option>
-          <option value="sixline">Six line, 6 numbers (5:1)</option>
-          <option value="dozen">Dozen (2:1)</option>
-          <option value="column">Column (2:1)</option>
+          <option value="number">Number (40:1)</option>
+          <option value="split">Split, 2 numbers (20:1)</option>
+          <option value="street">Street, 3 numbers (13:1)</option>
+          <option value="corner">Corner, 4 numbers (9:1)</option>
+          <option value="sixline">Six line, 6 numbers (5.5:1)</option>
+          <option value="dozen">Dozen (2.2:1)</option>
+          <option value="column">Column (2.2:1)</option>
           <option value="red">Red (1:1)</option>
           <option value="black">Black (1:1)</option>
-          <option value="even">Even (1:1)</option>
-          <option value="odd">Odd (1:1)</option>
+          <option value="even">Even (1.2:1)</option>
+          <option value="odd">Odd (1.2:1)</option>
           <option value="low">1-18 (1:1)</option>
           <option value="high">19-36 (1:1)</option>
         </select>
@@ -97,6 +97,7 @@
         </select>
       </div>
 
+      <div class="hint">승리 1.2:1 / 7은 베팅금 반환</div>
       <button type="button" onclick="playGame()">Draw high-low card</button>
     </div>
 
@@ -104,9 +105,9 @@
       <div class="form-row">
         <label>Baccarat side</label><br />
         <select id="baccaratSide">
-          <option value="PLAYER">PLAYER (1:1)</option>
-          <option value="BANKER">BANKER (0.95:1)</option>
-          <option value="TIE">TIE (8:1)</option>
+          <option value="PLAYER">PLAYER (1.2:1)</option>
+          <option value="BANKER">BANKER (1:1)</option>
+          <option value="TIE">TIE (10:1)</option>
         </select>
       </div>
 
@@ -125,6 +126,7 @@
         </select>
       </div>
 
+      <div class="hint">승리 1.2:1</div>
       <button type="button" onclick="playGame()">Draw red/black</button>
     </div>
 
@@ -142,6 +144,7 @@
         <button id="pvpStandButton" type="button" onclick="pvpAction('stand')" disabled>Stand</button>
       </div>
       <pre id="pvpState">No PVP game resolved.</pre>
+      <div id="pvpResultCopies" class="pvp-result-copies" hidden></div>
     </div>
 
     <div id="russianRouletteFields" style="display:none;">
@@ -179,7 +182,7 @@
         <div id="formulaParticipantInputs"></div>
       </div>
 
-      <div class="hint" id="formulaRequiredHint">Each player gets 6 random number cards from 0-10 and the operators +, -, ×(*), ÷(/), ^. Submit exactly: number operator number operator number.</div>
+      <div class="hint" id="formulaRequiredHint">Each player gets 6 random number cards from 0-10 and the operators +, -, ×(*), ÷(/), ^. Use all 6 numbers exactly once.</div>
       <div id="formulaSubmissionInputs"></div>
 
       <div class="hint">The closest result to the target wins the pot. Exact ties split the pot as evenly as possible.</div>
@@ -210,6 +213,7 @@
     </div>
 
     <div id="blackjackControls" style="display:none;">
+      <div class="hint">승리 1.2:1 / 무승부는 베팅금 반환</div>
       <button type="button" onclick="startBlackjack()">Start blackjack</button>
       <button id="hitButton" type="button" onclick="blackjackAction('hit')" disabled>Hit</button>
       <button id="standButton" type="button" onclick="blackjackAction('stand')" disabled>Stand</button>
@@ -263,6 +267,7 @@
     const pvpStandButton = document.getElementById('pvpStandButton');
     const pvpModeHint = document.getElementById('pvpModeHint');
     const pvpTurnBanner = document.getElementById('pvpTurnBanner');
+    const pvpResultCopies = document.getElementById('pvpResultCopies');
     const formulaHighLowStateBox = document.getElementById('formulaHighLowState');
     const formulaFinalButton = document.getElementById('formulaFinalButton');
     const formulaResolveButton = document.getElementById('formulaResolveButton');
@@ -590,7 +595,7 @@
 
     function updateFormulaRequiredInputs() {
       document.getElementById('formulaRequiredHint').textContent =
-        'Each player gets 6 random number cards from 0-10 and the operators +, -, ×(*), ÷(/), ^. Submit exactly: number operator number operator number.';
+        'Each player gets 6 random number cards from 0-10 and the operators +, -, ×(*), ÷(/), ^. Use all 6 numbers exactly once.';
     }
 
     function formatCombinationOperatorsForDisplay(operators = []) {
@@ -848,6 +853,39 @@
 
     function formatPvpCards(cards) {
       return Array.isArray(cards) && cards.length ? cards.join(', ') : '-';
+    }
+
+    function getPvpResultCopyText(state, playerKey) {
+      const player = state[playerKey] || {};
+      const playerLabel = playerKey === 'playerTwo' ? '플레이어 2' : '플레이어 1';
+      const resultChipText = state[`${playerKey}ResultChipText`] || '-';
+      const balanceText = player.balanceText || '-';
+
+      return `${getPvpGameLabel(state.gameType)}
+${playerLabel}: ${player.name || '-'}
+결과: ${state.result || '-'}
+승자: ${state.winnerName || '-'}
+결과 칩: ${resultChipText}
+현재 잔고: ${balanceText}`;
+    }
+
+    function renderPvpResultCopies(state) {
+      pvpResultCopies.innerHTML = '';
+
+      if (!state?.done) {
+        pvpResultCopies.hidden = true;
+        return;
+      }
+
+      ['playerOne', 'playerTwo'].forEach((playerKey, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `플레이어 ${index + 1}용 복사`;
+        button.onclick = () => copyText(getPvpResultCopyText(state, playerKey));
+        pvpResultCopies.appendChild(button);
+      });
+
+      pvpResultCopies.hidden = false;
     }
 
     function updatePvpControls(state = latestPvpState) {
@@ -1111,6 +1149,7 @@ ${valueLabel}: ${playerTwoValue ?? '-'}
 
 Result: ${state.result || 'In progress'}
 Winner: ${state.winnerName || '-'}${state.resultChipTexts?.length ? `\nResult chips:\n${state.resultChipTexts.join('\n')}` : ''}`;
+      renderPvpResultCopies(state);
       updatePvpControls(state);
     }
 
@@ -1228,11 +1267,11 @@ Winner: ${state.winnerName || '-'}${state.resultChipTexts?.length ? `\nResult ch
         input.className = 'formula-submission-input';
         input.dataset.playerId = participant.id;
         input.dataset.playerName = participant.name;
-        input.placeholder = 'Example: 10 ^ 2 - 7';
+        input.placeholder = 'Example: 10 ^ 2 - 7 + 4 * 3 / 1';
         input.value = participant.submission || '';
         input.disabled = state.stage !== 'input';
         hint.className = 'hint';
-        hint.textContent = `Numbers: ${(participant.numbers || []).join(', ')} / Operators: ${formatCombinationOperatorsForDisplay(participant.operators)}`;
+        hint.textContent = `Numbers: ${(participant.numbers || []).join(', ')} / Operators: ${formatCombinationOperatorsForDisplay(participant.operators)} / Use every number once`;
 
         row.append(label, document.createElement('br'), input, hint);
         container.appendChild(row);

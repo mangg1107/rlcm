@@ -85,6 +85,23 @@
   </div>
 
   <div class="section">
+    <h2>플레이어 잔고 교환</h2>
+
+    <div class="form-row">
+      <label>A 캐릭터</label><br />
+      <select id="swapPlayerA" onchange="updateSwapHint()"></select>
+    </div>
+
+    <div class="form-row">
+      <label>B 캐릭터</label><br />
+      <select id="swapPlayerB" onchange="updateSwapHint()"></select>
+    </div>
+
+    <button onclick="swapBalances()">잔고 교환</button>
+    <div class="hint" id="swapHint"></div>
+  </div>
+
+  <div class="section">
     <h2>색 변환 환전</h2>
 
     <div class="form-row">
@@ -205,7 +222,8 @@
       document.getElementById('rateGreen').value = rates.green;
       document.getElementById('rateYellow').value = rates.yellow;
       document.getElementById('rateWhite').value = rates.white;
-      updateConvertHint();
+      renderPlayerOptions();
+      updateHints();
     }
 
     function getPlayerById(playerId) {
@@ -218,6 +236,30 @@
 
     function getChipBalance(player, color) {
       return Math.floor(Number(player?.[color] || 0));
+    }
+
+    function getTotalValue(player) {
+      const hasRates = Object.keys(CHIP_LABELS)
+        .every((color) => Number.isFinite(Number(rates[color])));
+
+      if (hasRates) {
+        return Object.keys(CHIP_LABELS)
+          .reduce((total, color) => total + getChipBalance(player, color) * Number(rates[color]), 0);
+      }
+
+      return Number.isFinite(Number(player?.totalValue)) ? Math.floor(Number(player.totalValue)) : 0;
+    }
+
+    function formatChipSummary(player) {
+      return Object.keys(CHIP_LABELS)
+        .map((color) => `${CHIP_LABELS[color]}:${getChipBalance(player, color)}`)
+        .join(' ');
+    }
+
+    function formatBalanceText(player) {
+      return `플레이어: ${player.name}
+잔고: ${formatChipSummary(player)}
+총 가치: ${getTotalValue(player)}`;
     }
 
     function formatPlayerOption(player, color) {
@@ -237,10 +279,25 @@
       }
     }
 
+    function setBalanceSelectOptions(selectId) {
+      const select = document.getElementById(selectId);
+      const selectedValue = select.value;
+
+      select.innerHTML = players
+        .map((player) => `<option value="${player.id}">${player.name} (#${player.id}) - 총 가치:${getTotalValue(player)}</option>`)
+        .join('');
+
+      if (players.some((player) => String(player.id) === selectedValue)) {
+        select.value = selectedValue;
+      }
+    }
+
     function renderPlayerOptions() {
       setSelectOptions('adjustPlayer', document.getElementById('adjustColor').value);
       setSelectOptions('fromPlayer', document.getElementById('moveColor').value);
       setSelectOptions('toPlayer', document.getElementById('moveColor').value);
+      setBalanceSelectOptions('swapPlayerA');
+      setBalanceSelectOptions('swapPlayerB');
       setSelectOptions('convertPlayer', document.getElementById('fromColor').value);
     }
 
@@ -266,6 +323,7 @@
     function updateHints() {
       updateAdjustHint();
       updateMoveHint();
+      updateSwapHint();
       updateConvertHint();
     }
 
@@ -297,6 +355,24 @@
         : '';
     }
 
+    function updateSwapHint() {
+      const first = getPlayerById(document.getElementById('swapPlayerA').value);
+      const second = getPlayerById(document.getElementById('swapPlayerB').value);
+      const hint = document.getElementById('swapHint');
+
+      if (!first || !second) {
+        hint.textContent = '';
+        return;
+      }
+
+      if (first.id === second.id) {
+        hint.textContent = '서로 다른 플레이어를 선택하세요.';
+        return;
+      }
+
+      hint.textContent = `${first.name}: ${formatChipSummary(first)} ↔ ${second.name}: ${formatChipSummary(second)}`;
+    }
+
     function updateConvertHint() {
       const player = getPlayerById(document.getElementById('convertPlayer').value);
       const fromColor = document.getElementById('fromColor').value;
@@ -310,6 +386,57 @@
       document.getElementById('convertHint').textContent = player
         ? `보유 ${CHIP_LABELS[fromColor]} ${balance}개 / 예상 지급 ${CHIP_LABELS[toColor]} ${result}개`
         : '';
+    }
+
+    function fallbackCopyText(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+
+      try {
+        return document.execCommand('copy');
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+
+    async function copyText(text) {
+      if (!text) {
+        return false;
+      }
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+
+        return fallbackCopyText(text);
+      } catch (err) {
+        console.error(err);
+        try {
+          return fallbackCopyText(text);
+        } catch (copyErr) {
+          console.error(copyErr);
+          return false;
+        }
+      }
+    }
+
+    async function copyBalanceText(data, fallbackPlayers = []) {
+      const text = data.balanceText ||
+        (Array.isArray(data.balanceTexts) ? data.balanceTexts.join('\n\n') : '') ||
+        fallbackPlayers.map(formatBalanceText).join('\n\n');
+
+      return copyText(text);
+    }
+
+    function getCopyMessage(copied) {
+      return copied ? '\n현재 잔고를 복사했습니다.' : '\n현재 잔고 복사에 실패했습니다.';
     }
 
     async function adjustChip() {
@@ -352,7 +479,8 @@
       }
 
       mergePlayers(data.players);
-      alert(action === 'add' ? '칩 추가 완료' : '칩 감소 완료');
+      const copied = await copyBalanceText(data, data.players);
+      alert(`${action === 'add' ? '칩 추가 완료' : '칩 감소 완료'}${getCopyMessage(copied)}`);
     }
 
     async function sendChip() {
@@ -382,7 +510,43 @@
       }
 
       mergePlayers(data.players);
-      alert('칩 이동 완료');
+      const copied = await copyBalanceText(data, data.players);
+      alert(`칩 이동 완료${getCopyMessage(copied)}`);
+    }
+
+    async function swapBalances() {
+      const firstId = Number(document.getElementById('swapPlayerA').value);
+      const secondId = Number(document.getElementById('swapPlayerB').value);
+
+      if (!Number.isFinite(firstId) || !Number.isFinite(secondId)) {
+        alert('교환할 플레이어를 선택하세요.');
+        return;
+      }
+
+      if (firstId === secondId) {
+        alert('서로 다른 플레이어를 선택하세요.');
+        return;
+      }
+
+      const res = await fetch('/api/balance/swap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstId,
+          secondId
+        })
+      });
+
+      const data = await readResponse(res);
+
+      if (!res.ok) {
+        alert(data.error || '잔고 교환 실패');
+        return;
+      }
+
+      mergePlayers(data.players);
+      const copied = await copyBalanceText(data, data.players);
+      alert(`잔고 교환 완료${getCopyMessage(copied)}`);
     }
 
     async function convertChip() {
@@ -412,7 +576,8 @@
       }
 
       mergePlayers(data.players);
-      alert(`환전 완료: ${data.result}개 지급`);
+      const copied = await copyBalanceText(data, data.players);
+      alert(`환전 완료: ${data.result}개 지급${getCopyMessage(copied)}`);
     }
 
     async function setRates() {
@@ -443,7 +608,8 @@
         document.getElementById('rateGreen').value = rates.green;
         document.getElementById('rateYellow').value = rates.yellow;
         document.getElementById('rateWhite').value = rates.white;
-        updateConvertHint();
+        renderPlayerOptions();
+        updateHints();
       }
     }
 

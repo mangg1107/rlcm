@@ -2319,9 +2319,9 @@ function finishBlackjackSession(player, session) {
     session.result = '패배';
     setBlackjackChipResult(player, session, -session.bet);
   } else if (dealerValue > 21 || playerValue > dealerValue) {
-    player[session.color] += session.bet;
+    player[session.color] += toChipAmount(session.bet * BLACKJACK_PAYOUT);
     session.result = '승리';
-    setBlackjackChipResult(player, session, session.bet);
+    setBlackjackChipResult(player, session, toChipAmount(session.bet * BLACKJACK_PAYOUT));
   } else if (playerValue < dealerValue) {
     player[session.color] -= session.bet;
     session.result = '패배';
@@ -2364,6 +2364,29 @@ function getPvpBlackjackWinnerKey(playerOneValue, playerTwoValue) {
 }
 
 const ROULETTE_RED_NUMBERS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+const ROULETTE_PAYOUTS = {
+  number: 40,
+  split: 20,
+  street: 13,
+  corner: 9,
+  sixline: 5.5,
+  dozen: 2.2,
+  column: 2.2,
+  even: 1.2,
+  odd: 1.2,
+  red: 1,
+  black: 1,
+  low: 1,
+  high: 1
+};
+const HIGH_LOW_PAYOUT = 1.2;
+const BACCARAT_PAYOUTS = {
+  PLAYER: 1.2,
+  BANKER: 1,
+  TIE: 10
+};
+const BLACKJACK_PAYOUT = 1.2;
+const RED_BLACK_PAYOUT = 1.2;
 
 function parseRouletteNumbers(value) {
   return String(value || '')
@@ -2411,47 +2434,47 @@ function evaluateRouletteBet(type, detail, result) {
 
   if (betType === 'number' || betType === 'straight') {
     coveredNumbers = parseRouletteNumbers(detail).slice(0, 1);
-    payout = 35;
+    payout = ROULETTE_PAYOUTS.number;
     requiredCount = 1;
   } else if (betType === 'split') {
     coveredNumbers = parseRouletteNumbers(detail).slice(0, 2);
-    payout = 17;
+    payout = ROULETTE_PAYOUTS.split;
     requiredCount = 2;
   } else if (betType === 'street') {
     coveredNumbers = getRouletteStreetNumbers(detail);
-    payout = 11;
+    payout = ROULETTE_PAYOUTS.street;
   } else if (betType === 'corner') {
     coveredNumbers = parseRouletteNumbers(detail).slice(0, 4);
-    payout = 8;
+    payout = ROULETTE_PAYOUTS.corner;
     requiredCount = 4;
   } else if (betType === 'sixline') {
     coveredNumbers = getRouletteSixLineNumbers(detail);
-    payout = 5;
+    payout = ROULETTE_PAYOUTS.sixline;
   } else if (betType === 'dozen') {
     coveredNumbers = getRouletteDozenNumbers(detail);
-    payout = 2;
+    payout = ROULETTE_PAYOUTS.dozen;
   } else if (betType === 'column') {
     coveredNumbers = getRouletteColumnNumbers(detail);
-    payout = 2;
+    payout = ROULETTE_PAYOUTS.column;
   } else if (betType === 'red') {
     coveredNumbers = [...ROULETTE_RED_NUMBERS];
-    payout = 1;
+    payout = ROULETTE_PAYOUTS.red;
   } else if (betType === 'black') {
     coveredNumbers = Array.from({ length: 36 }, (_, index) => index + 1)
       .filter((number) => !ROULETTE_RED_NUMBERS.has(number));
-    payout = 1;
+    payout = ROULETTE_PAYOUTS.black;
   } else if (betType === 'even') {
     coveredNumbers = Array.from({ length: 18 }, (_, index) => (index + 1) * 2);
-    payout = 1;
+    payout = ROULETTE_PAYOUTS.even;
   } else if (betType === 'odd') {
     coveredNumbers = Array.from({ length: 18 }, (_, index) => index * 2 + 1);
-    payout = 1;
+    payout = ROULETTE_PAYOUTS.odd;
   } else if (betType === 'low' || betType === '1-18') {
     coveredNumbers = Array.from({ length: 18 }, (_, index) => index + 1);
-    payout = 1;
+    payout = ROULETTE_PAYOUTS.low;
   } else if (betType === 'high' || betType === '19-36') {
     coveredNumbers = Array.from({ length: 18 }, (_, index) => index + 19);
-    payout = 1;
+    payout = ROULETTE_PAYOUTS.high;
   }
 
   return {
@@ -2473,7 +2496,7 @@ function playRoulette(player, color, bet, extra) {
   }
 
   if (evaluation.win) {
-    player[color] += bet * evaluation.payout;
+    player[color] += toChipAmount(bet * evaluation.payout);
   } else {
     player[color] -= bet;
   }
@@ -2527,7 +2550,7 @@ function playHighLow(player, color, bet, extra) {
   }
 
   if (win) {
-    player[color] += bet;
+    player[color] += toChipAmount(bet * HIGH_LOW_PAYOUT);
   } else {
     player[color] -= bet;
   }
@@ -2535,6 +2558,7 @@ function playHighLow(player, color, bet, extra) {
   return {
     win,
     push: false,
+    payout: HIGH_LOW_PAYOUT,
     extra: {
       ...extra,
       choice,
@@ -2685,7 +2709,7 @@ function playBaccarat(player, color, bet, extra) {
       : 'TIE';
   const push = outcome === 'TIE' && side !== 'TIE';
   const win = side === outcome;
-  const payout = side === 'TIE' ? 8 : side === 'BANKER' ? 0.95 : 1;
+  const payout = getBaccaratPayout(side);
 
   if (win) {
     player[color] += toChipAmount(bet * payout);
@@ -2716,7 +2740,7 @@ function isValidBaccaratSide(side) {
 }
 
 function getBaccaratPayout(side) {
-  return side === 'TIE' ? 8 : side === 'BANKER' ? 0.95 : 1;
+  return BACCARAT_PAYOUTS[side] || 0;
 }
 
 function isBaccaratNatural(session) {
@@ -2867,14 +2891,24 @@ function getPvpPlayerName(playerId) {
 }
 
 function getPvpSessionState(session) {
+  const playerOne = getPlayerById(session.playerOneId);
+  const playerTwo = getPlayerById(session.playerTwoId);
   const playerOneName = getPvpPlayerName(session.playerOneId);
   const playerTwoName = getPvpPlayerName(session.playerTwoId);
   const activePlayerName = session.turn === 'playerTwo' ? playerTwoName : playerOneName;
   const state = {
     id: session.id,
     gameType: session.gameType,
-    playerOne: { id: session.playerOneId, name: playerOneName },
-    playerTwo: { id: session.playerTwoId, name: playerTwoName },
+    playerOne: {
+      id: session.playerOneId,
+      name: playerOneName,
+      balanceText: playerOne ? chipStr(playerOne) : ''
+    },
+    playerTwo: {
+      id: session.playerTwoId,
+      name: playerTwoName,
+      balanceText: playerTwo ? chipStr(playerTwo) : ''
+    },
     color: session.color,
     bet: session.bet,
     playerOneCards: session.playerOneCards || [],
@@ -3081,7 +3115,7 @@ function makePvpPlayerPublicSection(viewer, state, session, viewerKey) {
 
   return `${viewer.name}
 내 패: ${formatPvpCardsForViewer(viewerCards, valueLabel, viewerValue, true)}
-상대 패: ${formatPvpOpponentCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent, session.gameType)}${state.done ? chipResultLine(state[`${viewerKey}ResultChipText`]) : ''}`;
+상대 패: ${formatPvpOpponentCardsForViewer(opponentCards, valueLabel, opponentValue, revealOpponent, session.gameType)}${state.done ? chipResultLine(state[`${viewerKey}ResultChipText`]) : ''}${state.done ? `\n현재 잔고: ${chipStr(viewer)}` : ''}`;
 }
 
 function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
@@ -3094,7 +3128,7 @@ function makePvpPublicLog(playerOne, playerTwo, session, resultText) {
 플레이어 2: ${playerTwo.name}
 베팅: ${session.color} ${session.bet}
 결과: ${resultText}
-승자: ${state.winnerName || '-'}${state.done && state.resultChipTexts.length ? `\n결과 칩:\n${state.resultChipTexts.join('\n')}` : ''}
+승자: ${state.winnerName || '-'}
 
 [플레이어 1 공개]
 ${makePvpPlayerPublicSection(playerOne, state, session, 'playerOne')}
@@ -3116,13 +3150,14 @@ function playRedBlack(player, color, bet, extra) {
   const win = pick === result;
 
   if (win) {
-    player[color] += bet;
+    player[color] += toChipAmount(bet * RED_BLACK_PAYOUT);
   } else {
     player[color] -= bet;
   }
 
   return {
     win,
+    payout: RED_BLACK_PAYOUT,
     result,
     extra: {
       ...extra,
@@ -3390,6 +3425,21 @@ function makeTransferPublicLog(from, to, color, amount) {
 이동 칩: ${color} ${amount}`;
 }
 
+function makeBalanceSwapLog(first, second) {
+  return `잔고 교환
+A 캐릭터: ${first.name}
+B 캐릭터: ${second.name}
+
+${first.name}: ${chipStr(first)}
+${second.name}: ${chipStr(second)}`;
+}
+
+function makeBalanceSwapPublicLog(first, second) {
+  return `잔고 교환
+A 캐릭터: ${first.name}
+B 캐릭터: ${second.name}`;
+}
+
 function makeConvertLog(p, fromColor, toColor, amount, result) {
   return `💱 환전
 플레이어: ${p.name}
@@ -3432,6 +3482,15 @@ function makeBalancePublicLog(p) {
   return `플레이어: ${p.name}
 잔고: ${chipStr(p)}
 총 가치: ${getPlayerChipValue(p)}`;
+}
+
+function makeBalanceCopyPayload(playerList) {
+  const balanceTexts = playerList.map(makeBalancePublicLog);
+
+  return {
+    balanceText: balanceTexts.join('\n\n'),
+    balanceTexts
+  };
 }
 
 const FORMULA_CARD_SUITS = [
@@ -4612,6 +4671,7 @@ const COMBINATION_OPERATOR_ALIASES = {
   '^': '^',
   '＾': '^'
 };
+const COMBINATION_NUMBER_CARD_COUNT = 6;
 const COMBINATION_TARGET_MIN = 0;
 const COMBINATION_TARGET_MAX = 100;
 
@@ -4622,7 +4682,7 @@ function drawCombinationNumberCard() {
 function createCombinationParticipantState(playerId) {
   return {
     playerId: Number(playerId),
-    numbers: Array.from({ length: 6 }, drawCombinationNumberCard),
+    numbers: Array.from({ length: COMBINATION_NUMBER_CARD_COUNT }, drawCombinationNumberCard),
     submission: '',
     evaluation: null
   };
@@ -4686,20 +4746,21 @@ function tokenizeCombinationExpression(expression) {
 function parseCombinationExpression(expression) {
   const tokens = tokenizeCombinationExpression(expression);
 
-  if (
-    tokens.length !== 5 ||
-    tokens[0]?.type !== 'number' ||
-    tokens[1]?.type !== 'operator' ||
-    tokens[2]?.type !== 'number' ||
-    tokens[3]?.type !== 'operator' ||
-    tokens[4]?.type !== 'number'
-  ) {
-    throw createHttpError(400, '수식은 숫자, 기호, 숫자, 기호, 숫자 형식이어야 합니다.');
+  if (!tokens.length) {
+    throw createHttpError(400, '수식을 입력해야 합니다.');
+  }
+
+  const hasValidShape = tokens.length % 2 === 1 && tokens.every((token, index) => (
+    index % 2 === 0 ? token.type === 'number' : token.type === 'operator'
+  ));
+
+  if (!hasValidShape) {
+    throw createHttpError(400, '수식은 숫자로 시작하고 숫자로 끝나며 숫자와 기호가 번갈아야 합니다.');
   }
 
   return {
-    numbers: [tokens[0].value, tokens[2].value, tokens[4].value],
-    operators: [tokens[1].value, tokens[3].value],
+    numbers: tokens.filter((token) => token.type === 'number').map((token) => token.value),
+    operators: tokens.filter((token) => token.type === 'operator').map((token) => token.value),
     tokens,
     expression: tokens
       .map((token) => token.type === 'operator' ? COMBINATION_OPERATOR_LABELS[token.value] : token.raw)
@@ -4707,11 +4768,8 @@ function parseCombinationExpression(expression) {
   };
 }
 
-function hasEnoughCombinationNumbers(availableNumbers, submittedNumbers) {
-  const available = numberCounts(availableNumbers);
-  const submitted = numberCounts(submittedNumbers);
-
-  return Object.keys(submitted).every((key) => (available[key] || 0) >= submitted[key]);
+function usesExactCombinationNumbers(availableNumbers, submittedNumbers) {
+  return countsMatch(numberCounts(availableNumbers), numberCounts(submittedNumbers));
 }
 
 function applyCombinationOperator(left, operator, right) {
@@ -4801,14 +4859,15 @@ function evaluateCombinationParsedExpression(parsed) {
 function evaluateCombinationFormula(playerState, expression, target, playerLabel) {
   try {
     const parsed = parseCombinationExpression(expression);
+    const availableNumbers = playerState.numbers || [];
     const invalidNumbers = parsed.numbers.filter((value) => !Number.isInteger(value) || value < 0 || value > 10);
 
     if (invalidNumbers.length) {
       throw createHttpError(400, '숫자 카드는 0부터 10까지만 사용할 수 있습니다.');
     }
 
-    if (!hasEnoughCombinationNumbers(playerState.numbers || [], parsed.numbers)) {
-      throw createHttpError(400, `보유 숫자 ${formatCombinationNumbers(playerState.numbers)} 중 3개만 사용할 수 있습니다.`);
+    if (!usesExactCombinationNumbers(availableNumbers, parsed.numbers)) {
+      throw createHttpError(400, `보유 숫자 ${formatCombinationNumbers(availableNumbers)}를 모두 정확히 한 번씩 사용해야 합니다.`);
     }
 
     const value = evaluateCombinationParsedExpression(parsed);
@@ -4924,7 +4983,7 @@ function makeCombinationBettingStartLog(participants, session) {
 각자 베팅: ${session.color} ${session.bet}개
 총 팟: ${session.color} ${session.pot}개
 사용 가능 기호: ${formatCombinationOperatorsWithInputAliases()}
-규칙: 보유 숫자 6개 중 3개와 기호 2개를 골라 숫자, 기호, 숫자, 기호, 숫자 형식의 수식을 제출합니다.
+규칙: 보유 숫자 ${COMBINATION_NUMBER_CARD_COUNT}개를 모두 정확히 한 번씩 사용해 숫자와 기호가 번갈아 나오는 수식을 제출합니다.
 
 숫자 카드
 ${hands}`;
@@ -4937,7 +4996,7 @@ function makeCombinationBettingStartPublicLog(participants, session) {
 숫자: ${formatCombinationNumbers(state.numbers)}
 타겟: ${formatFormulaValue(session.target)}
 연산자: ${formatCombinationOperatorsWithInputAliases()}
-제출 형식: 숫자, 연산자, 숫자, 연산자, 숫자`;
+제출 형식: 숫자, 연산자, 숫자, 연산자, 숫자, 연산자, 숫자, 연산자, 숫자, 연산자, 숫자`;
     })
     .join('\n\n');
 
@@ -5148,7 +5207,10 @@ app.post('/players/:playerId/balance-log', async (req, res) => {
 app.post('/chips/adjust', async (req, res) => {
   try {
     const { playerId, color, amount, action } = req.body;
-    await loadPlayersByIds([playerId]);
+    await Promise.all([
+      loadPlayersByIds([playerId]),
+      loadRatesCached()
+    ]);
 
     const player = getPlayerById(playerId);
     const adjustAmount = toChipAmount(amount);
@@ -5194,7 +5256,13 @@ app.post('/chips/adjust', async (req, res) => {
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, log: log.text, logs: [log], players: serializePlayers([player]) });
+    res.json({
+      ok: true,
+      log: log.text,
+      logs: [log],
+      players: serializePlayers([player]),
+      ...makeBalanceCopyPayload([player])
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '칩 조정 중 오류가 발생했습니다.' });
@@ -6140,7 +6208,7 @@ app.post('/game', async (req, res) => {
     } else if (gameType === 'highlow') {
       const highlow = playHighLow(player, color, bet, extra);
       win = highlow.win;
-      logMultiplier = highlow.push ? 'push' : '1:1';
+      logMultiplier = highlow.push ? 'push' : `${highlow.payout}:1`;
       logExtra = highlow.extra;
       result = highlow.extra.card;
     } else if (gameType === 'baccarat') {
@@ -6152,7 +6220,7 @@ app.post('/game', async (req, res) => {
     } else if (gameType === 'redblack') {
       const redblack = playRedBlack(player, color, bet, extra);
       win = redblack.win;
-      logMultiplier = '1:1';
+      logMultiplier = `${redblack.payout}:1`;
       logExtra = redblack.extra;
       result = redblack.result;
     } else {
@@ -6205,7 +6273,10 @@ app.post('/game', async (req, res) => {
 app.post('/exchange', async (req, res) => {
   try {
     const { fromId, toId, color, amount } = req.body;
-    await loadPlayersByIds([fromId, toId]);
+    await Promise.all([
+      loadPlayersByIds([fromId, toId]),
+      loadRatesCached()
+    ]);
     const from = getPlayerById(fromId);
     const to = getPlayerById(toId);
     const moveAmount = toChipAmount(amount);
@@ -6246,10 +6317,68 @@ app.post('/exchange', async (req, res) => {
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, log: log.text, logs: [log], players: serializePlayers([from, to]) });
+    res.json({
+      ok: true,
+      log: log.text,
+      logs: [log],
+      players: serializePlayers([from, to]),
+      ...makeBalanceCopyPayload([from, to])
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '칩 이동 중 오류가 발생했습니다.' });
+  }
+});
+
+// 잔고 교환
+app.post('/balance/swap', async (req, res) => {
+  try {
+    const { firstId, secondId } = req.body;
+    await Promise.all([
+      loadPlayersByIds([firstId, secondId]),
+      loadRatesCached()
+    ]);
+    const first = getPlayerById(firstId);
+    const second = getPlayerById(secondId);
+
+    if (!first || !second) {
+      return res.status(404).json({ error: '플레이어를 찾을 수 없습니다.' });
+    }
+
+    if (first.id === second.id) {
+      return res.status(400).json({ error: '서로 다른 플레이어를 선택해야 합니다.' });
+    }
+
+    const firstBalances = Object.fromEntries(COLORS.map((color) => [color, readChipValue(first[color])]));
+
+    COLORS.forEach((color) => {
+      first[color] = readChipValue(second[color]);
+      second[color] = firstBalances[color];
+    });
+
+    const [log] = await Promise.all([
+      addLog(
+        'balance-swap',
+        makeBalanceSwapLog(first, second),
+        makeBalanceSwapPublicLog(first, second)
+      ),
+      savePlayers([first, second])
+    ]);
+
+    emitRealtime('update', players);
+    emitRealtime('log', lastLogText);
+    emitRealtime('logs', logHistory);
+
+    res.json({
+      ok: true,
+      log: log.text,
+      logs: [log],
+      players: serializePlayers([first, second]),
+      ...makeBalanceCopyPayload([first, second])
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '잔고 교환 중 오류가 발생했습니다.' });
   }
 });
 
@@ -6307,7 +6436,14 @@ app.post('/convert', async (req, res) => {
     emitRealtime('log', lastLogText);
     emitRealtime('logs', logHistory);
 
-    res.json({ ok: true, result, log: log.text, logs: [log], players: serializePlayers([player]) });
+    res.json({
+      ok: true,
+      result,
+      log: log.text,
+      logs: [log],
+      players: serializePlayers([player]),
+      ...makeBalanceCopyPayload([player])
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '환전 처리 중 오류가 발생했습니다.' });
