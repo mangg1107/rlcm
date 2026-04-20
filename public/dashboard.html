@@ -367,7 +367,7 @@
     }
 
     function parseLogSections(text) {
-      const matches = [...String(text || '').matchAll(/^\[(공통 공개|플레이어 \d+ 공개|플레이어 \d+ 제출 정보|제출 정보)\]\s*$/gm)];
+      const matches = [...String(text || '').matchAll(/^\[([^\]\r\n]+)\]\s*$/gm)];
 
       if (!matches.length) {
         return null;
@@ -387,10 +387,26 @@
       };
     }
 
-    function getSectionCopyText(parsed, section) {
-      const common = parsed.sections.find((candidate) => candidate.label === '공통 공개');
+    function isCommonLogSection(label) {
+      return label === '공통 공개';
+    }
 
-      if (!section.label.startsWith('플레이어') || !common) {
+    function isPlayerCopySection(label) {
+      return /\s*copy용\s*$/.test(label);
+    }
+
+    function getSectionCopyText(parsed, section) {
+      if (isPlayerCopySection(section.label)) {
+        return section.text;
+      }
+
+      const common = parsed.sections.find((candidate) => isCommonLogSection(candidate.label));
+
+      if (section.label.startsWith('플레이어')) {
+        return section.text;
+      }
+
+      if (isCommonLogSection(section.label) || !common) {
         return [
           parsed.title,
           `[${section.label}]\n${section.text}`
@@ -409,8 +425,12 @@
     }
 
     function getSectionCopyButtonLabel(section) {
-      if (section.label === '공통 공개') {
+      if (isCommonLogSection(section.label)) {
         return '공통 공개 복사';
+      }
+
+      if (isPlayerCopySection(section.label)) {
+        return `${section.label.replace(/\s*copy용\s*$/, '')} 복사`;
       }
 
       if (section.label.startsWith('플레이어')) {
@@ -498,7 +518,7 @@
         pre.textContent = section.text;
         header.appendChild(label);
 
-        if (section.label === '공통 공개' || section.label.startsWith('플레이어') || section.label === '제출 정보') {
+        if (section.label) {
           const copyButton = document.createElement('button');
           copyButton.type = 'button';
           copyButton.textContent = getSectionCopyButtonLabel(section);

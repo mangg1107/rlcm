@@ -2374,10 +2374,10 @@ const ROULETTE_PAYOUTS = {
   column: 2.2,
   even: 1.2,
   odd: 1.2,
-  red: 1,
-  black: 1,
-  low: 1,
-  high: 1
+  red: 1.2,
+  black: 1.2,
+  low: 1.2,
+  high: 1.2
 };
 const HIGH_LOW_PAYOUT = 1.2;
 const BACCARAT_PAYOUTS = {
@@ -3222,11 +3222,30 @@ function makeRussianRoulettePublicLog(session) {
   const resultText = state.done
     ? `${state.color} ${state.pot} 지급`
     : state.lastAction;
-
-  return `생존자: ${active}
+  const commonText = `생존자: ${active}
 탈락자: ${eliminated}
 라운드: ${state.round}
-결과: ${resultText}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}${state.done && state.resultChipTexts.length ? `\n결과 칩:\n${state.resultChipTexts.join('\n')}` : ''}`;
+결과: ${resultText}${state.done ? `\n최종 승자: ${state.winnerName}` : ''}`;
+
+  if (!state.done || !state.resultChipTexts.length) {
+    return commonText;
+  }
+
+  const playerSections = state.participants
+    .map((player, index) => {
+      const resultChipText = state.resultChipTexts.find((text) => text.startsWith(`${player.name}:`))
+        || state.resultChipTexts[index]
+        || '-';
+
+      return `[${player.name} copy용]
+${commonText}
+결과 칩:
+${resultChipText}`;
+    })
+    .join('\n\n');
+
+  return `러시안룰렛
+${playerSections}`;
 }
 
 // =========================
@@ -5052,14 +5071,33 @@ ${balances}`;
 function makeCombinationBettingSettlementPublicLog(participants, session, payouts) {
   const totalPaid = [...payouts.values()].reduce((sum, amount) => sum + amount, 0);
   const discarded = Math.max(0, session.pot - totalPaid);
-
-  return `콤비네이션 베팅 정산
-목표 숫자: ${formatFormulaValue(session.target)}
+  const commonText = `목표 숫자: ${formatFormulaValue(session.target)}
 각자 베팅: ${session.color} ${session.bet}개
 총 팟: ${session.color} ${session.pot}개
 지급 합계: ${session.color} ${totalPaid}개
 버림: ${session.color} ${discarded}개
-승자: ${getCombinationWinnerNames(session.winnerIds)}${session.resultChipTexts?.length ? `\n결과 칩:\n${session.resultChipTexts.join('\n')}` : ''}`;
+승자: ${getCombinationWinnerNames(session.winnerIds)}`;
+
+  if (!session.resultChipTexts?.length) {
+    return `콤비네이션 베팅 정산
+${commonText}`;
+  }
+
+  const playerSections = participants
+    .map((player, index) => {
+      const resultChipText = session.resultChipTexts.find((text) => text.startsWith(`${player.name}:`))
+        || session.resultChipTexts[index]
+        || '-';
+
+      return `[${player.name} copy용]
+${commonText}
+결과 칩:
+${resultChipText}`;
+    })
+    .join('\n\n');
+
+  return `콤비네이션 베팅 정산
+${playerSections}`;
 }
 
 // =========================
