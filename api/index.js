@@ -66,6 +66,7 @@ const ROW_NUMBER_CACHE_TTL_MS = 60000;
 
 let rates = { ...DEFAULT_RATES };
 let playersLoadedAt = 0;
+let playersCacheComplete = false;
 let playersCacheInvalidatedAt = 0;
 let playersLoadPromise = null;
 let playerRowNumbers = new Map();
@@ -392,6 +393,7 @@ function invalidatePlayersCache() {
 
 function markPlayersCacheFresh() {
   playersLoadedAt = Date.now();
+  playersCacheComplete = true;
 }
 
 function markRatesCacheFresh() {
@@ -656,11 +658,15 @@ async function loadSheet() {
   if (rows.length <= 1) {
     players = [];
     rememberPlayerRowNumbers(players, { replace: true });
+    playersCacheComplete = true;
+    playersLoadedAt = Date.now();
     return;
   }
 
   players = rows.slice(1).map((row, index) => parsePlayerRow(row, index + 2));
   rememberPlayerRowNumbers(players, { replace: true });
+  playersCacheComplete = true;
+  playersLoadedAt = Date.now();
 }
 
 async function loadSheetCached() {
@@ -707,7 +713,8 @@ async function saveSheet() {
     requestBody: { values }
   });
 
-  invalidatePlayersCache();
+  playersCacheComplete = true;
+  playersLoadedAt = Date.now();
 }
 
 async function getPlayerRowNumbers(playerIds, options = {}) {
@@ -759,13 +766,20 @@ async function getPlayerRowNumbers(playerIds, options = {}) {
 }
 
 async function loadPlayersByIds(playerIds) {
-  invalidatePlayersCache();
-
   const ids = uniquePlayerIds(playerIds);
 
   if (!ids.length) {
     players = [];
+    playersCacheComplete = false;
     return players;
+  }
+
+  if (playersCacheComplete && isReadCacheFresh(playersLoadedAt)) {
+    const cachedPlayersById = new Map(players.map((player) => [Number(player.id), player]));
+
+    if (ids.every((id) => cachedPlayersById.has(id))) {
+      return ids.map((id) => cachedPlayersById.get(id));
+    }
   }
 
   await ensureDailyGameLimitReset();
@@ -778,6 +792,7 @@ async function loadPlayersByIds(playerIds) {
 
   if (!targets.length) {
     players = [];
+    playersCacheComplete = false;
     return players;
   }
 
@@ -793,6 +808,7 @@ async function loadPlayersByIds(playerIds) {
   }
 
   players = await readTargetPlayers();
+  playersCacheComplete = false;
 
   if (canUseCachedRowNumbers && players.length < targets.length) {
     rowNumbers = await getPlayerRowNumbers(ids, { forceRefresh: true });
@@ -800,6 +816,7 @@ async function loadPlayersByIds(playerIds) {
       .map((id) => ({ id, rowNumber: rowNumbers.get(id) }))
       .filter((target) => target.rowNumber);
     players = targets.length ? await readTargetPlayers() : [];
+    playersCacheComplete = false;
   }
 
   rememberPlayerRowNumbers(players);
@@ -856,7 +873,12 @@ async function savePlayers(changedPlayers) {
     const rowNumber = getRowNumberFromRange(entry.range);
     rememberPlayerRowNumber(targetPlayers[index].id, rowNumber);
   });
-  invalidatePlayersCache();
+
+  if (playersCacheComplete) {
+    playersLoadedAt = Date.now();
+  } else {
+    invalidatePlayersCache();
+  }
 }
 
 async function ensureLogSheetHeader() {
@@ -6364,7 +6386,7 @@ app.post('/exchange', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '칩 이동 중 오류가 발생했습니다.' });
+    res.status(500).json({ error: '칩 이동 중 오류가 발생했습니다.', detail: getErrorDetail(err) });
   }
 });
 
@@ -6416,7 +6438,7 @@ app.post('/balance/swap', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '잔고 교환 중 오류가 발생했습니다.' });
+    res.status(500).json({ error: '잔고 교환 중 오류가 발생했습니다.', detail: getErrorDetail(err) });
   }
 });
 
@@ -6426,7 +6448,7 @@ app.post('/convert', async (req, res) => {
     const { playerId, fromColor, toColor, amount } = req.body;
     await Promise.all([
       loadPlayersByIds([playerId]),
-      loadRates()
+      loadRatesCached()
     ]);
     const player = getPlayerById(playerId);
     const convertAmount = toChipAmount(amount);
@@ -6484,7 +6506,7 @@ app.post('/convert', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: '환전 처리 중 오류가 발생했습니다.' });
+    res.status(500).json({ error: '환전 처리 중 오류가 발생했습니다.', detail: getErrorDetail(err) });
   }
 });
 

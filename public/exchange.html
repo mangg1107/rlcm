@@ -474,7 +474,7 @@
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || '칩 조정 실패');
+        alert([data.error || '칩 조정 실패', data.detail].filter(Boolean).join('\n'));
         return;
       }
 
@@ -505,13 +505,12 @@
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || '칩 이동 실패');
+        alert([data.error || '칩 이동 실패', data.detail].filter(Boolean).join('\n'));
         return;
       }
 
       mergePlayers(data.players);
-      const copied = await copyBalanceText(data, data.players);
-      alert(`칩 이동 완료${getCopyMessage(copied)}`);
+      alert('칩 이동 완료');
     }
 
     async function swapBalances() {
@@ -540,13 +539,12 @@
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || '잔고 교환 실패');
+        alert([data.error || '잔고 교환 실패', data.detail].filter(Boolean).join('\n'));
         return;
       }
 
       mergePlayers(data.players);
-      const copied = await copyBalanceText(data, data.players);
-      alert(`잔고 교환 완료${getCopyMessage(copied)}`);
+      alert('잔고 교환 완료');
     }
 
     async function convertChip() {
@@ -571,7 +569,7 @@
       const data = await readResponse(res);
 
       if (!res.ok) {
-        alert(data.error || '환전 실패');
+        alert([data.error || '환전 실패', data.detail].filter(Boolean).join('\n'));
         return;
       }
 
